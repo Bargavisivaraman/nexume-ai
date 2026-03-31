@@ -505,7 +505,7 @@ async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[
     try:
         params = {"limit": limit}
         if category: params["category"] = category
-        if keyword:  params["search"] = keyword
+        # Remotive search is unreliable — skip keyword filter, return broad results
         async with httpx.AsyncClient(timeout=12.0) as client:
             resp = await client.get("https://remotive.com/api/remote-jobs", params=params)
             resp.raise_for_status()
@@ -564,7 +564,7 @@ async def get_jobs(
         # If Supabase is empty fall back to live Remotive (free, no key needed)
         if not jobs:
             rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
-            jobs = await fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=per_page)
+            jobs = await fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=max(per_page, 40))
 
         return {
             "jobs":     jobs,
