@@ -488,31 +488,57 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 function SkeletonJobCard() {
   return (
-    <div className="job-card skeleton-card">
-      <div className="job-card-header">
-        <div className="job-card-info">
-          <div className="skeleton-line" style={{ width: "30%", height: "18px", marginBottom: "10px" }} />
-          <div className="skeleton-line" style={{ width: "55%", height: "22px", marginBottom: "8px" }} />
-          <div className="skeleton-line" style={{ width: "40%", height: "16px" }} />
+    <div className="li-job-card skeleton-card" style={{ pointerEvents: "none" }}>
+      <div className="li-card-top">
+        <div className="skeleton-line" style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="skeleton-line" style={{ width: "55%", height: "17px", marginBottom: "8px" }} />
+          <div className="skeleton-line" style={{ width: "38%", height: "13px", marginBottom: "6px" }} />
+          <div className="skeleton-line" style={{ width: "28%", height: "12px" }} />
         </div>
       </div>
-      <div className="skeleton-line" style={{ width: "100%", height: "14px", marginTop: "14px" }} />
-      <div className="skeleton-line" style={{ width: "80%", height: "14px", marginTop: "8px" }} />
+      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+        <div className="skeleton-line" style={{ width: 60, height: 18, borderRadius: 4 }} />
+        <div className="skeleton-line" style={{ width: 50, height: 18, borderRadius: 4 }} />
+        <div className="skeleton-line" style={{ width: 55, height: 18, borderRadius: 4 }} />
+      </div>
+    </div>
+  );
+}
+
+// ── COMPANY AVATAR ─────────────────────────────────────────────────────────────
+function CompanyAvatar({ name, size = 44 }) {
+  const initials = name
+    ? name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase()
+    : "?";
+  const hue = name ? [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % 360 : 200;
+  return (
+    <div
+      className="company-avatar"
+      style={{
+        width: size, height: size,
+        background: `hsl(${hue},45%,28%)`,
+        border: `1px solid hsl(${hue},45%,38%)`,
+      }}
+    >
+      <span style={{ color: `hsl(${hue},70%,72%)`, fontSize: size * 0.38, fontWeight: 800 }}>
+        {initials}
+      </span>
     </div>
   );
 }
 
 function JobsTab({ onPrepInterview }) {
-  const [country, setCountry]     = useState("US");
-  const [query, setQuery]         = useState("");
-  const [jobs, setJobs]           = useState([]);
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState(null);
-  const [retryMsg, setRetryMsg]   = useState(null);
-  const [page, setPage]           = useState(1);
-  const [hasMore, setHasMore]     = useState(false);
-  const [expanded, setExpanded]   = useState(null);
-  const [showFilters, setShowFilters] = useState(false);
+  const [country, setCountry]       = useState("US");
+  const [query, setQuery]           = useState("");
+  const [locationQuery, setLocationQuery] = useState("");
+  const [jobs, setJobs]             = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState(null);
+  const [retryMsg, setRetryMsg]     = useState(null);
+  const [page, setPage]             = useState(1);
+  const [hasMore, setHasMore]       = useState(false);
+  const [expanded, setExpanded]     = useState(null);
   const [filters, setFilters] = useState({
     industry: "", jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "",
   });
@@ -609,7 +635,11 @@ function JobsTab({ onPrepInterview }) {
     return () => clearTimeout(t);
   }, [query]);
 
-  const search = () => fetchJobs(country, query, 1);
+  const search = () => {
+    const next = { ...filters, stateFilter: locationQuery };
+    setFilters(next);
+    fetchJobs(country, query, 1, next);
+  };
 
   const applyFilter = (key, val) => {
     const next = { ...filters, [key]: val };
@@ -620,6 +650,7 @@ function JobsTab({ onPrepInterview }) {
   const clearFilters = () => {
     const reset = { industry: "", jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "" };
     setFilters(reset);
+    setLocationQuery("");
     fetchJobs(country, query, 1, reset);
   };
 
@@ -638,202 +669,244 @@ function JobsTab({ onPrepInterview }) {
 
   return (
     <div className="jobs-page">
-      <div className="page-banner">
-        <h2>Find Your Next Role</h2>
-        <p>Real jobs across every industry, updated regularly</p>
-        <div className="jobs-controls">
-          <div className="country-toggle">
-            {[["US", "🇺🇸 United States"], ["IN", "🇮🇳 India"]].map(([code, label]) => (
-              <button key={code} className={country === code ? "active" : ""} onClick={() => { setCountry(code); setQuery(""); }}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="job-search-form">
-            <input
-              placeholder="Job title, skill, or keyword…"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && search()}
-            />
-            <button onClick={search}>Search</button>
-          </div>
-          <button className={`filter-toggle-btn ${showFilters ? "active" : ""}`} onClick={() => setShowFilters(v => !v)}>
-            {showFilters ? "▲ Hide Filters" : "▼ Filters"}{hasActiveFilters ? " •" : ""}
-          </button>
+      {/* ── Sticky search bar ── */}
+      <div className="jobs-search-bar">
+        <input
+          className="jobs-search-input"
+          placeholder="Job title, skill, or keyword…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && search()}
+        />
+        <input
+          className="jobs-location-input"
+          placeholder="Location (e.g. CA, Texas)"
+          value={locationQuery}
+          onChange={e => setLocationQuery(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && search()}
+        />
+        <button className="jobs-search-btn" onClick={search}>Search</button>
+        <div className="jobs-country-pills">
+          {[["US","🇺🇸 US"],["IN","🇮🇳 India"]].map(([code, label]) => (
+            <button
+              key={code}
+              className={`jobs-country-pill${country === code ? " active" : ""}`}
+              onClick={() => { setCountry(code); setQuery(""); setLocationQuery(""); }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="jobs-inner">
-      {showFilters && (
-        <div className="filter-panel">
-          <div className="filter-row">
-            <span className="filter-label">Industry</span>
-            <div className="filter-chips">
-              {INDUSTRIES.map(ind => (
-                <button key={ind} className={`filter-chip ${filters.industry === ind ? "active" : ""}`}
-                  style={filters.industry === ind ? { borderColor: INDUSTRY_COLORS[ind], color: INDUSTRY_COLORS[ind], background: `${INDUSTRY_COLORS[ind]}18` } : {}}
-                  onClick={() => applyFilter("industry", filters.industry === ind ? "" : ind)}>
-                  {ind}
-                </button>
-              ))}
-            </div>
+      {/* ── Two-column body ── */}
+      <div className="jobs-body">
+
+        {/* Left sidebar */}
+        <aside className="jobs-sidebar">
+          <div className="jobs-sidebar-title">
+            <span>Filters</span>
+            {hasActiveFilters && (
+              <button className="jobs-sidebar-clear" onClick={clearFilters}>Clear all</button>
+            )}
           </div>
-          <div className="filter-row">
-            <span className="filter-label">Job Type</span>
-            <div className="filter-chips">
+
+          {/* Job Type */}
+          <div className="jobs-filter-section">
+            <span className="jobs-filter-label">Job Type</span>
+            <div className="jobs-filter-chips">
               {[["FULLTIME","Full-time"],["PARTTIME","Part-time"],["CONTRACTOR","Contract"],["INTERN","Internship"]].map(([val, label]) => (
-                <button key={val} className={`filter-chip ${filters.jobType === val ? "active" : ""}`}
-                  onClick={() => applyFilter("jobType", filters.jobType === val ? "" : val)}>
+                <button
+                  key={val}
+                  className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
+                  onClick={() => applyFilter("jobType", filters.jobType === val ? "" : val)}
+                >
                   {label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="filter-row">
-            <span className="filter-label">Experience</span>
-            <div className="filter-chips">
-              {[["Entry Level","Entry Level"],["Mid Level","Mid Level"],["Senior","Senior"],["Executive","Executive"]].map(([val, label]) => (
-                <button key={val} className={`filter-chip ${filters.expLevel === val ? "active" : ""}`}
-                  onClick={() => applyFilter("expLevel", filters.expLevel === val ? "" : val)}>
+
+          {/* Experience */}
+          <div className="jobs-filter-section">
+            <span className="jobs-filter-label">Experience</span>
+            <div className="jobs-filter-chips">
+              {[["Entry Level","Entry"],["Mid Level","Mid"],["Senior","Senior"],["Executive","Executive"]].map(([val, label]) => (
+                <button
+                  key={val}
+                  className={`jobs-filter-chip${filters.expLevel === val ? " active" : ""}`}
+                  onClick={() => applyFilter("expLevel", filters.expLevel === val ? "" : val)}
+                >
                   {label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="filter-row">
-            <span className="filter-label">Posted</span>
-            <div className="filter-chips">
-              {[["24h","Past 24h"],["7d","Past 7 days"],["30d","Past Month"],["all","All Time"]].map(([val, label]) => (
-                <button key={val} className={`filter-chip ${filters.dateRange === val ? "active" : ""}`}
-                  onClick={() => applyFilter("dateRange", val)}>
+
+          {/* Date Posted */}
+          <div className="jobs-filter-section">
+            <span className="jobs-filter-label">Date Posted</span>
+            <div className="jobs-filter-chips">
+              {[["all","Any"],["24h","Past 24h"],["7d","Past week"],["30d","Past month"]].map(([val, label]) => (
+                <button
+                  key={val}
+                  className={`jobs-filter-chip${filters.dateRange === val ? " active" : ""}`}
+                  onClick={() => applyFilter("dateRange", val)}
+                >
                   {label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="filter-row">
-            <span className="filter-label">Work Mode</span>
-            <div className="filter-chips">
-              <button className={`filter-chip ${filters.remote ? "active" : ""}`}
-                onClick={() => applyFilter("remote", !filters.remote)}>
-                Remote Only
+
+          {/* Remote Only toggle */}
+          <div className="jobs-filter-section">
+            <span className="jobs-filter-label">Work Mode</span>
+            <div className="jobs-remote-row">
+              <span className="jobs-remote-label">Remote Only</span>
+              <label className="jobs-toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={filters.remote}
+                  onChange={() => applyFilter("remote", !filters.remote)}
+                />
+                <span className="jobs-toggle-track" />
+                <span className="jobs-toggle-thumb" />
+              </label>
+            </div>
+          </div>
+        </aside>
+
+        {/* Right main */}
+        <main className="jobs-main">
+
+          {/* Mobile horizontal filter row */}
+          <div className="jobs-mobile-filters">
+            {[["FULLTIME","Full-time"],["PARTTIME","Part-time"],["CONTRACTOR","Contract"],["INTERN","Internship"]].map(([val, label]) => (
+              <button
+                key={val}
+                className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
+                onClick={() => applyFilter("jobType", filters.jobType === val ? "" : val)}
+              >
+                {label}
               </button>
-            </div>
-            <input
-              className="filter-state-input"
-              placeholder="State (e.g. CA, Texas)"
-              value={filters.stateFilter}
-              onChange={e => setFilter("stateFilter", e.target.value)}
-              onKeyDown={e => e.key === "Enter" && applyFilter("stateFilter", filters.stateFilter)}
-            />
-            <button className="filter-apply-btn" onClick={() => fetchJobs(country, query, 1)}>Apply</button>
-            {hasActiveFilters && <button className="filter-clear-btn" onClick={clearFilters}>Clear All</button>}
+            ))}
+            {[["Entry Level","Entry"],["Mid Level","Mid"],["Senior","Senior"]].map(([val, label]) => (
+              <button
+                key={val}
+                className={`jobs-filter-chip${filters.expLevel === val ? " active" : ""}`}
+                onClick={() => applyFilter("expLevel", filters.expLevel === val ? "" : val)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className={`jobs-filter-chip${filters.remote ? " active" : ""}`}
+              onClick={() => applyFilter("remote", !filters.remote)}
+            >
+              Remote
+            </button>
           </div>
-        </div>
-      )}
 
-      {retryMsg && (
-        <p className="error-msg" style={{ textAlign: "center", padding: "10px 0", opacity: 0.7 }}>
-          ⏳ {retryMsg}
-        </p>
-      )}
-
-      {error === "cold_start" ? (
-        <div className="jobs-empty" style={{ padding: "40px 0" }}>
-          <p style={{ fontSize: "1.1rem", marginBottom: "8px" }}>⏳ Server is waking up…</p>
-          <p style={{ opacity: 0.6, marginBottom: "20px" }}>This can take up to 60 seconds on first load. Please wait or retry.</p>
-          <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
-        </div>
-      ) : error ? (
-        <div className="jobs-empty" style={{ padding: "40px 0" }}>
-          <p style={{ fontSize: "1rem", marginBottom: "16px", color: "#ff453a" }}>⚠ {error}</p>
-          <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
-        </div>
-      ) : null}
-
-      {!error && (loading && jobs.length === 0 ? (
-        <div className="jobs-list">
-          {Array.from({ length: 6 }).map((_, i) => <SkeletonJobCard key={i} />)}
-        </div>
-      ) : jobs.length === 0 && !loading ? (
-        <div className="jobs-empty">No jobs found. Try adjusting your filters or search terms.</div>
-      ) : (
-        <>
-          {jobs.length > 0 && (
-            <p className="jobs-count">{jobs.length} job{jobs.length !== 1 ? "s" : ""} loaded{hasActiveFilters ? " (filtered)" : ""}</p>
+          {retryMsg && (
+            <p style={{ textAlign: "center", padding: "10px 0", opacity: 0.7, fontSize: 13, color: "var(--text-dim)" }}>
+              ⏳ {retryMsg}
+            </p>
           )}
-          <div className="jobs-list">
-            {jobs.map(job => {
-              const indColor = INDUSTRY_COLORS[job.industry] || "#636366";
-              const expColor = EXP_COLORS[job.experience_level] || "#aeaeb2";
-              const src = job.url ? getSource(job.url) : null;
-              const empType = formatEmploymentType(job.employment_type);
-              return (
-                <div key={job.job_id} className="job-card">
-                  <div className="job-card-header">
-                    <div className="job-card-info">
-                      <div className="job-badges">
-                        {job.industry && job.industry !== "Other" && (
-                          <span className="job-badge" style={{ color: indColor, background: `${indColor}18`, border: `1px solid ${indColor}40` }}>{job.industry}</span>
-                        )}
-                        {job.experience_level && (
-                          <span className="job-badge" style={{ color: expColor, background: `${expColor}18`, border: `1px solid ${expColor}40` }}>{job.experience_level}</span>
-                        )}
-                        {job.is_remote && (
-                          <span className="job-badge" style={{ color: "#30d158", background: "rgba(48,209,88,0.1)", border: "1px solid rgba(48,209,88,0.3)" }}>Remote</span>
-                        )}
-                        {empType && (
-                          <span className="job-badge" style={{ color: "rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>{empType}</span>
-                        )}
+
+          {error === "cold_start" ? (
+            <div className="jobs-empty" style={{ padding: "40px 0" }}>
+              <p style={{ fontSize: "1.1rem", marginBottom: "8px" }}>⏳ Server is waking up…</p>
+              <p style={{ opacity: 0.6, marginBottom: "20px" }}>This can take up to 60 seconds on first load. Please wait or retry.</p>
+              <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
+            </div>
+          ) : error ? (
+            <div className="jobs-empty" style={{ padding: "40px 0" }}>
+              <p style={{ fontSize: "1rem", marginBottom: "16px", color: "#ff453a" }}>⚠ {error}</p>
+              <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
+            </div>
+          ) : null}
+
+          {!error && (loading && jobs.length === 0 ? (
+            <div>
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonJobCard key={i} />)}
+            </div>
+          ) : jobs.length === 0 && !loading ? (
+            <div className="jobs-empty">No jobs found. Try adjusting your filters or search terms.</div>
+          ) : (
+            <>
+              {jobs.length > 0 && (
+                <p className="jobs-result-count">
+                  {jobs.length} job{jobs.length !== 1 ? "s" : ""} found{hasActiveFilters ? " · filtered" : ""}
+                </p>
+              )}
+              {jobs.map(job => {
+                const indColor = INDUSTRY_COLORS[job.industry] || "#636366";
+                const expColor = EXP_COLORS[job.experience_level] || "#aeaeb2";
+                const empType = formatEmploymentType(job.employment_type);
+                const timeAgo = job.posted_at ? formatDate(job.posted_at) : null;
+                const isExpanded = expanded === job.job_id;
+                return (
+                  <div
+                    key={job.job_id}
+                    className={`li-job-card${isExpanded ? " active" : ""}`}
+                    onClick={() => setExpanded(isExpanded ? null : job.job_id)}
+                  >
+                    <div className="li-card-top">
+                      <CompanyAvatar name={job.company} size={44} />
+                      <div className="li-card-info">
+                        <div className="li-job-title">{job.title || "Untitled"}</div>
+                        <div className="li-job-company">{job.company || "Company not listed"}</div>
+                        {job.location && <div className="li-job-location">{job.location}</div>}
                       </div>
-                      <p className="job-title">{job.title || "Untitled"}</p>
-                      <p className="job-company">{job.company || "Company not listed"}</p>
-                      <div className="job-meta">
-                        {job.location && <span>📍 {job.location}</span>}
-                        {job.posted_at && formatDate(job.posted_at) && <span>🕒 {formatDate(job.posted_at)}</span>}
-                        {src && <span className="job-source">via {src}</span>}
-                      </div>
+                      {timeAgo && <span className="li-time">{timeAgo}</span>}
                     </div>
-                    <div className="job-actions">
-                      {job.url ? (
-                        <a className="apply-btn" href={job.url} target="_blank" rel="noopener noreferrer">Apply Now</a>
-                      ) : (
-                        <span className="apply-btn apply-na">No Link</span>
+
+                    <div className="li-card-meta">
+                      {job.industry && job.industry !== "Other" && (
+                        <span className="li-badge" style={{ color: indColor, background: `${indColor}14`, borderColor: `${indColor}35` }}>{job.industry}</span>
                       )}
-                      <button className="interview-btn" onClick={() => onPrepInterview(job.title, job.company)}>
+                      {empType && (
+                        <span className="li-badge" style={{ color: "var(--text-muted)", background: "var(--surface2)", borderColor: "var(--border)" }}>{empType}</span>
+                      )}
+                      {job.experience_level && (
+                        <span className="li-badge" style={{ color: expColor, background: `${expColor}14`, borderColor: `${expColor}35` }}>{job.experience_level}</span>
+                      )}
+                      {job.is_remote && (
+                        <span className="li-badge" style={{ color: "#30d158", background: "rgba(48,209,88,0.1)", borderColor: "rgba(48,209,88,0.3)" }}>Remote</span>
+                      )}
+                    </div>
+
+                    <div className="li-card-actions" onClick={e => e.stopPropagation()}>
+                      {job.url ? (
+                        <a className="li-apply-btn" href={job.url} target="_blank" rel="noopener noreferrer">Easy Apply</a>
+                      ) : (
+                        <span className="li-apply-btn apply-na">No Link</span>
+                      )}
+                      <button className="li-prep-btn" onClick={() => onPrepInterview(job.title, job.company)}>
                         Prep Interview
                       </button>
                     </div>
+
+                    {isExpanded && (
+                      <div className="li-description" onClick={e => e.stopPropagation()}>
+                        {job.description || "No description available."}
+                      </div>
+                    )}
                   </div>
-                  {job.description ? (
-                    <p className="job-desc">
-                      {expanded === job.job_id
-                        ? job.description
-                        : job.description.slice(0, 200) + (job.description.length > 200 ? "…" : "")}
-                      {job.description.length > 200 && (
-                        <button className="expand-btn" onClick={() => setExpanded(expanded === job.job_id ? null : job.job_id)}>
-                          {expanded === job.job_id ? " Show less" : " Show more"}
-                        </button>
-                      )}
-                    </p>
-                  ) : (
-                    <p className="job-desc" style={{ opacity: 0.3 }}>No description available.</p>
-                  )}
+                );
+              })}
+              {hasMore && (
+                <div style={{ textAlign: "center", marginTop: "24px" }}>
+                  <button className="load-more-btn" onClick={e => { e.stopPropagation(); fetchJobs(country, query, page + 1); }} disabled={loading}>
+                    {loading ? <><span className="spinner" /> Loading…</> : "Load More Jobs"}
+                  </button>
                 </div>
-              );
-            })}
-          </div>
-          {hasMore && (
-            <div style={{ textAlign: "center", marginTop: "36px" }}>
-              <button className="load-more-btn" onClick={() => fetchJobs(country, query, page + 1)} disabled={loading}>
-                {loading ? <><span className="spinner" /> Loading…</> : "Load More Jobs"}
-              </button>
-            </div>
-          )}
-        </>
-      ))}
-      </div>{/* /jobs-inner */}
+              )}
+            </>
+          ))}
+        </main>
+      </div>
     </div>
   );
 }
