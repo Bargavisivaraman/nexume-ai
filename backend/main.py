@@ -697,6 +697,93 @@ async def fetch_usajobs(keyword: str = "", location: str = "Los Angeles, CA", li
         return []
 
 
+# ── JOBICY FETCHER (official free API, no key needed) ────────────────────────
+async def fetch_jobicy_jobs(keyword: str = "", limit: int = 30) -> list:
+    """Fetch remote jobs from Jobicy — legit remote job board used by Netflix, Spotify, etc."""
+    try:
+        params = {"count": min(limit, 50), "geo": "usa"}
+        if keyword:
+            params["tag"] = keyword
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get("https://jobicy.com/api/v2/remote-jobs", params=params)
+            resp.raise_for_status()
+            raw = resp.json().get("jobs", [])
+        jobs_out = []
+        for j in raw:
+            jobs_out.append({
+                "job_id":           f"jobicy_{j.get('id', '')}",
+                "title":            j.get("jobTitle", ""),
+                "company":          j.get("companyName", "Unknown"),
+                "location":         j.get("jobGeo", "Remote"),
+                "url":              j.get("url", ""),
+                "job_url":          j.get("url", ""),
+                "employment_type":  j.get("jobType", "FULLTIME").upper().replace("-", ""),
+                "experience_level": j.get("jobLevel", ""),
+                "industry":         j.get("jobIndustry", ["Technology"])[0] if j.get("jobIndustry") else "Technology",
+                "posted_at":        j.get("pubDate", ""),
+                "fetched_at":       j.get("pubDate", ""),
+                "description":      j.get("jobExcerpt", "")[:800],
+                "salary_min":       None,
+                "salary_max":       None,
+                "is_remote":        True,
+                "country":          "US",
+                "source":           "Jobicy",
+            })
+        print(f"[Jobicy] Fetched {len(jobs_out)} jobs")
+        return jobs_out
+    except Exception as e:
+        print(f"[Jobicy] Error: {e}")
+        return []
+
+
+# ── ARBEITNOW FETCHER (official free API, no key needed) ─────────────────────
+async def fetch_arbeitnow_jobs(keyword: str = "", limit: int = 30) -> list:
+    """Fetch jobs from Arbeitnow — international job board with US remote roles."""
+    try:
+        jobs_out = []
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            for page in range(1, 3):
+                resp = await client.get(
+                    "https://arbeitnow.com/api/job-board-api",
+                    params={"page": page}
+                )
+                if resp.status_code != 200:
+                    break
+                data = resp.json().get("data", [])
+                if not data:
+                    break
+                for j in data:
+                    title = j.get("title", "")
+                    tags  = j.get("tags", [])
+                    # keyword filter client-side
+                    if keyword and keyword.lower() not in title.lower() and keyword.lower() not in " ".join(tags).lower():
+                        continue
+                    jobs_out.append({
+                        "job_id":           f"arb_{j.get('slug', '')}",
+                        "title":            title,
+                        "company":          j.get("company_name", "Unknown"),
+                        "location":         j.get("location", "Remote"),
+                        "url":              j.get("url", ""),
+                        "job_url":          j.get("url", ""),
+                        "employment_type":  "FULLTIME",
+                        "experience_level": "",
+                        "industry":         tags[0].title() if tags else "Technology",
+                        "posted_at":        str(j.get("created_at", "")),
+                        "fetched_at":       str(j.get("created_at", "")),
+                        "description":      j.get("description", "")[:800],
+                        "is_remote":        j.get("remote", False),
+                        "country":          "US",
+                        "source":           "Arbeitnow",
+                    })
+                if len(jobs_out) >= limit:
+                    break
+        print(f"[Arbeitnow] Fetched {len(jobs_out)} jobs")
+        return jobs_out[:limit]
+    except Exception as e:
+        print(f"[Arbeitnow] Error: {e}")
+        return []
+
+
 async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[str] = None, limit: int = 40) -> list:
     """Fetch live remote jobs from Remotive (free, no auth required)."""
     try:
@@ -768,15 +855,18 @@ async def get_jobs(
             muse_task     = fetch_themuse_jobs(keyword=keyword or "", location=loc, limit=30)
             usajobs_task  = fetch_usajobs(keyword=keyword or "", location=loc, limit=25)
             remotive_task = fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=20)
+            jobicy_task   = fetch_jobicy_jobs(keyword=keyword or "", limit=30)
+            arbeitnow_task = fetch_arbeitnow_jobs(keyword=keyword or "", limit=30)
 
-            adzuna_jobs, muse_jobs, usa_jobs, remotive_jobs = await asyncio.gather(
-                adzuna_task, muse_task, usajobs_task, remotive_task,
+            results = await asyncio.gather(
+                adzuna_task, muse_task, usajobs_task,
+                remotive_task, jobicy_task, arbeitnow_task,
                 return_exceptions=True,
             )
 
             # Collect valid results (skip any that raised exceptions)
             all_live: list = []
-            for batch in [adzuna_jobs, muse_jobs, usa_jobs, remotive_jobs]:
+            for batch in results:
                 if isinstance(batch, list):
                     all_live.extend(batch)
 
