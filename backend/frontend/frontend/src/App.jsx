@@ -891,13 +891,18 @@ function JobsTab({ onPrepInterview }) {
 
                     <div className="li-card-actions" onClick={e => e.stopPropagation()}>
                       {job.url ? (
-                        <a className="li-apply-btn" href={job.url} target="_blank" rel="noopener noreferrer">Easy Apply</a>
+                        <a className="li-apply-btn" href={job.url} target="_blank" rel="noopener noreferrer">Apply Now</a>
+                      ) : job.job_url ? (
+                        <a className="li-apply-btn" href={job.job_url} target="_blank" rel="noopener noreferrer">Apply Now</a>
                       ) : (
                         <span className="li-apply-btn apply-na">No Link</span>
                       )}
                       <button className="li-prep-btn" onClick={() => onPrepInterview(job.title, job.company)}>
                         Prep Interview
                       </button>
+                      {job.source && (
+                        <span className="li-source-badge">{job.source}</span>
+                      )}
                     </div>
 
                     {isExpanded && (

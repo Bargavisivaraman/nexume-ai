@@ -572,6 +572,12 @@ li::before { content: "→"; position: absolute; left: 0; color: var(--text-dim)
   font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.18s;
 }
 .li-prep-btn:hover { border-color: var(--primary); color: var(--text); }
+.li-source-badge {
+  margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 3px 8px; border-radius: 20px; text-transform: uppercase;
+  background: rgba(123,47,247,0.1); color: rgba(123,47,247,0.8);
+  border: 1px solid rgba(123,47,247,0.2);
+}
 .li-description {
   margin-top: 14px; padding-top: 14px;
   border-top: 1px solid var(--border2);

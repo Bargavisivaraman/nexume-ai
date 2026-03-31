@@ -575,6 +575,128 @@ async def fetch_adzuna_jobs(
         print(f"[Adzuna] Error: {e}")
         return []
 
+# ── THE MUSE JOB FETCHER (free, no key) ──────────────────────────────────────
+async def fetch_themuse_jobs(keyword: str = "", location: str = "Los Angeles", limit: int = 40) -> list:
+    """Fetch jobs from The Muse — startup & tech companies, free, no API key needed."""
+    try:
+        # The Muse location slugs
+        loc_map = {
+            "los angeles": "Los%20Angeles%2C%20CA",
+            "new york": "New%20York%2C%20NY",
+            "san francisco": "San%20Francisco%2C%20CA",
+            "remote": "Flexible%20%2F%20Remote",
+        }
+        loc_key = location.lower().split(",")[0].strip()
+        loc_param = loc_map.get(loc_key, "Los%20Angeles%2C%20CA")
+
+        jobs_out = []
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            for page in range(1, 3):  # fetch 2 pages = ~40 jobs
+                url = f"https://www.themuse.com/api/public/jobs?location={loc_param}&page={page}&descending=true"
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                results = data.get("results", [])
+                if not results:
+                    break
+                for j in results:
+                    company = j.get("company", {}).get("name", "Unknown")
+                    title   = j.get("name", "")
+                    locs    = [loc.get("name","") for loc in j.get("locations", [])]
+                    lvls    = [lv.get("name","") for lv in j.get("levels", [])]
+                    cats    = [c.get("name","") for c in j.get("categories", [])]
+                    ref     = j.get("refs", {}).get("landing_page", "")
+                    # keyword filter client-side
+                    if keyword and keyword.lower() not in title.lower() and keyword.lower() not in " ".join(cats).lower():
+                        continue
+                    jobs_out.append({
+                        "job_id":           f"muse_{j.get('id','')}",
+                        "title":            title,
+                        "company":          company,
+                        "location":         ", ".join(locs) if locs else location,
+                        "url":              ref,
+                        "job_url":          ref,
+                        "employment_type":  "FULLTIME",
+                        "experience_level": lvls[0] if lvls else "",
+                        "industry":         cats[0] if cats else "Technology",
+                        "posted_at":        j.get("publication_date", ""),
+                        "fetched_at":       j.get("publication_date", ""),
+                        "description":      j.get("contents", "")[:800] if j.get("contents") else "",
+                        "country":          "US",
+                        "source":           "The Muse",
+                    })
+                if len(jobs_out) >= limit:
+                    break
+        print(f"[TheMuse] Fetched {len(jobs_out)} jobs for '{keyword or 'any'}' in '{location}'")
+        return jobs_out[:limit]
+    except Exception as e:
+        print(f"[TheMuse] Error: {e}")
+        return []
+
+
+# ── USAJOBS FETCHER (free, register at developer.usajobs.gov) ─────────────────
+async def fetch_usajobs(keyword: str = "", location: str = "Los Angeles, CA", limit: int = 25) -> list:
+    """Fetch US government jobs from USAJobs.gov — free, requires API key from developer.usajobs.gov"""
+    api_key   = os.getenv("USAJOBS_API_KEY", "")
+    user_agent = os.getenv("USAJOBS_USER_AGENT", "")  # your registered email
+    if not api_key or not user_agent:
+        return []
+    try:
+        params = {
+            "Keyword":        keyword or "",
+            "LocationName":   location,
+            "ResultsPerPage": min(limit, 25),
+            "SortField":      "OpenDate",
+            "SortDirection":  "Desc",
+        }
+        headers = {
+            "Authorization-Key": api_key,
+            "User-Agent":        user_agent,
+            "Host":              "data.usajobs.gov",
+        }
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(
+                "https://data.usajobs.gov/api/search",
+                params=params, headers=headers
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        jobs_out = []
+        items = data.get("SearchResult", {}).get("SearchResultItems", [])
+        for item in items:
+            pos     = item.get("MatchedObjectDescriptor", {})
+            locs    = pos.get("PositionLocation", [{}])
+            loc_str = locs[0].get("LocationName", location) if locs else location
+            salary  = pos.get("PositionRemuneration", [{}])
+            sal_min = salary[0].get("MinimumRange") if salary else None
+            sal_max = salary[0].get("MaximumRange") if salary else None
+            jobs_out.append({
+                "job_id":           f"usa_{pos.get('PositionID','')}",
+                "title":            pos.get("PositionTitle", ""),
+                "company":          pos.get("OrganizationName", "US Government"),
+                "location":         loc_str,
+                "url":              pos.get("PositionURI", ""),
+                "job_url":          pos.get("ApplyURI", [""])[0] if pos.get("ApplyURI") else "",
+                "employment_type":  "FULLTIME",
+                "experience_level": "",
+                "industry":         "Government",
+                "posted_at":        pos.get("PublicationStartDate", ""),
+                "fetched_at":       pos.get("PublicationStartDate", ""),
+                "description":      pos.get("UserArea", {}).get("Details", {}).get("JobSummary", "")[:800],
+                "salary_min":       int(float(sal_min)) if sal_min else None,
+                "salary_max":       int(float(sal_max)) if sal_max else None,
+                "country":          "US",
+                "source":           "USAJobs",
+            })
+        print(f"[USAJobs] Fetched {len(jobs_out)} jobs for '{keyword}' in '{location}'")
+        return jobs_out
+    except Exception as e:
+        print(f"[USAJobs] Error: {e}")
+        return []
+
+
 async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[str] = None, limit: int = 40) -> list:
     """Fetch live remote jobs from Remotive (free, no auth required)."""
     try:
@@ -637,27 +759,45 @@ async def get_jobs(
         result = q.order("fetched_at", desc=True).range(offset, offset + per_page - 1).execute()
         jobs   = result.data or []
 
-        # ── Fallback 1: Adzuna — aggregates Indeed, Glassdoor, Monster, company sites & more ──
+        # ── Live sources — run ALL in parallel, merge results ──────────────────
         if not jobs:
-            loc = location or ("Los Angeles, CA" if country.upper() == "US" else "Remote")
-            jobs = await fetch_adzuna_jobs(
-                keyword  = keyword or "",
-                location = loc,
-                page     = page,
-                limit    = max(per_page, 50),
+            loc          = location or ("Los Angeles, CA" if country.upper() == "US" else "Remote")
+            rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
+
+            adzuna_task   = fetch_adzuna_jobs(keyword=keyword or "", location=loc, page=page, limit=50)
+            muse_task     = fetch_themuse_jobs(keyword=keyword or "", location=loc, limit=30)
+            usajobs_task  = fetch_usajobs(keyword=keyword or "", location=loc, limit=25)
+            remotive_task = fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=20)
+
+            adzuna_jobs, muse_jobs, usa_jobs, remotive_jobs = await asyncio.gather(
+                adzuna_task, muse_task, usajobs_task, remotive_task,
+                return_exceptions=True,
             )
 
-        # ── Fallback 2: Remotive — remote-only, no location filter ──
-        if not jobs:
-            rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
-            jobs = await fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=max(per_page, 40))
+            # Collect valid results (skip any that raised exceptions)
+            all_live: list = []
+            for batch in [adzuna_jobs, muse_jobs, usa_jobs, remotive_jobs]:
+                if isinstance(batch, list):
+                    all_live.extend(batch)
+
+            # Deduplicate by title+company (case-insensitive)
+            seen   = set()
+            unique = []
+            for j in all_live:
+                key = f"{j.get('title','').lower().strip()}|{j.get('company','').lower().strip()}"
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(j)
+
+            jobs = unique
 
         return {
             "jobs":     jobs,
             "page":     page,
             "country":  country.upper(),
             "count":    len(jobs),
-            "has_more": len(jobs) == per_page,
+            "has_more": len(jobs) >= per_page,
+            "sources":  list({j.get("source","Unknown") for j in jobs}),
         }
     except Exception as e:
         print(f"[/jobs/] Error: {e}")
