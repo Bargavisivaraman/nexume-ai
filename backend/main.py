@@ -40,6 +40,12 @@ app.add_middleware(
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Groq client — free tier, extremely fast (llama-3.1-8b-instant)
+groq_client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY", ""),
+    base_url="https://api.groq.com/openai/v1",
+)
+
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY")
@@ -466,10 +472,10 @@ async def startup_event():
     #   Free: 500 req/mo → set hours=24
     #   Basic ($10): 3000 req/mo → set hours=8
     #   Pro ($30): 20000 req/mo → set hours=2
-    scheduler.add_job(refresh_all_jobs, "interval", hours=8, id="job_refresh")
-    scheduler.start()
-    asyncio.create_task(refresh_all_jobs())
-    print("[Startup] Scheduler started.")
+    # scheduler.add_job(refresh_all_jobs, "interval", hours=8, id="job_refresh")
+    # scheduler.start()
+    # asyncio.create_task(refresh_all_jobs())  # disabled: JSearch quota exceeded
+    print("[Startup] Job refresh disabled (JSearch quota exceeded).")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -815,6 +821,362 @@ Return JSON:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — COVER LETTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CoverLetterRequest(BaseModel):
+    resume_text: str
+    job_description: str
+    tone: Optional[str] = "professional"
+
+@app.post("/generate-cover-letter/")
+async def generate_cover_letter(req: CoverLetterRequest):
+    if len(req.resume_text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+    if len(req.job_description.strip()) < 50:
+        raise HTTPException(status_code=400, detail="Job description too short")
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are an expert career coach and professional writer. Write compelling, personalized cover letters. Return ONLY valid JSON."},
+                {"role": "user", "content": f"""
+Write a tailored cover letter using the candidate's resume and job description.
+
+Resume:
+{req.resume_text[:3000]}
+
+Job Description:
+{req.job_description[:2000]}
+
+Tone: {req.tone}
+
+Rules:
+- Address the specific role and company requirements
+- Highlight 2-3 most relevant experiences from the resume
+- Show genuine enthusiasm without being generic
+- Use keywords from the JD naturally
+- Keep it under 350 words
+- Do NOT include date/address headers — just the body paragraphs
+
+Return JSON:
+{{
+  "cover_letter": "the full cover letter text with paragraph breaks using \\n\\n",
+  "highlights": ["3 key strengths emphasized"],
+  "keywords_used": ["5-8 JD keywords woven in"]
+}}
+"""}
+            ],
+            max_tokens=800,
+            temperature=0.5,
+        )
+        return json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — LINKEDIN OPTIMIZER
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LinkedInRequest(BaseModel):
+    linkedin_summary: str
+    target_role: Optional[str] = ""
+
+@app.post("/optimize-linkedin/")
+async def optimize_linkedin(req: LinkedInRequest):
+    if len(req.linkedin_summary.strip()) < 50:
+        raise HTTPException(status_code=400, detail="Summary too short")
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a LinkedIn profile optimization expert. Return ONLY valid JSON."},
+                {"role": "user", "content": f"""
+Analyze and optimize this LinkedIn About/Summary section.
+{f'Target Role: {req.target_role}' if req.target_role else ''}
+
+Current Summary:
+{req.linkedin_summary[:2000]}
+
+Return JSON:
+{{
+  "score": <integer 0-100 — current profile strength>,
+  "rewritten": "improved version of the summary (max 300 words, first person, strong opening hook)",
+  "issues": ["3-5 specific issues with the current summary"],
+  "keywords_to_add": ["6-8 keywords to improve recruiter searchability"],
+  "tips": ["3 actionable profile tips beyond the summary (headline, featured, etc.)"]
+}}
+"""}
+            ],
+            max_tokens=700,
+            temperature=0.4,
+        )
+        return json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LinkedIn optimization failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — COLD EMAIL GENERATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ColdEmailRequest(BaseModel):
+    job_title: str
+    company: str
+    resume_text: Optional[str] = ""
+    your_name: Optional[str] = ""
+
+@app.post("/generate-cold-email/")
+async def generate_cold_email(req: ColdEmailRequest):
+    if not req.job_title or not req.company:
+        raise HTTPException(status_code=400, detail="Job title and company are required")
+    resume_ctx = f"\nMy Resume:\n{req.resume_text[:1500]}" if req.resume_text else ""
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are an expert at writing cold outreach emails that get responses. Return ONLY valid JSON."},
+                {"role": "user", "content": f"""
+Write a cold outreach email to a recruiter or hiring manager at {req.company} for a {req.job_title} role.
+{f'Sender name: {req.your_name}' if req.your_name else ''}{resume_ctx}
+
+Rules:
+- Subject line that stands out (specific, not generic)
+- Opening hook — lead with value, not 'I saw your job posting'
+- 1-2 sentences on relevant background from resume
+- Clear ask (15-min call / coffee chat)
+- Under 150 words total — brevity is key
+- Warm but confident tone
+
+Return JSON:
+{{
+  "subject": "the email subject line",
+  "email": "the full email body with \\n for line breaks",
+  "follow_up": "a short 3-line follow-up email to send 5 days later if no reply"
+}}
+"""}
+            ],
+            max_tokens=500,
+            temperature=0.6,
+        )
+        return json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — SKILL GAP ANALYZER
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SkillGapRequest(BaseModel):
+    resume_text: str
+    target_role: str
+
+@app.post("/analyze-skill-gap/")
+async def analyze_skill_gap(req: SkillGapRequest):
+    if len(req.resume_text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+    if not req.target_role.strip():
+        raise HTTPException(status_code=400, detail="Target role required")
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a senior tech recruiter and skills expert. Return ONLY valid JSON."},
+                {"role": "user", "content": f"""
+Analyze the skill gap between this candidate's resume and the target role.
+
+Target Role: {req.target_role}
+
+Resume:
+{req.resume_text[:3000]}
+
+Return JSON:
+{{
+  "readiness_score": <integer 0-100>,
+  "readiness_label": "Ready / Almost Ready / Needs Work / Major Gap",
+  "has_skills": ["skills they already have that are relevant to the target role"],
+  "missing_critical": ["must-have skills they lack — top priority to learn"],
+  "missing_nice": ["nice-to-have skills that would help them stand out"],
+  "learning_path": [
+    {{"skill": "skill name", "resource": "best free/paid resource to learn it", "time": "estimated time e.g. 2 weeks"}}
+  ],
+  "quick_wins": ["3 things they can do immediately to look more qualified for this role"]
+}}
+"""}
+            ],
+            max_tokens=900,
+            temperature=0.3,
+        )
+        return json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Skill gap analysis failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — SALARY ESTIMATOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SalaryRequest(BaseModel):
+    resume_text: str
+    target_role: str
+    location: Optional[str] = "United States"
+
+@app.post("/estimate-salary/")
+async def estimate_salary(req: SalaryRequest):
+    if len(req.resume_text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+    if not req.target_role.strip():
+        raise HTTPException(status_code=400, detail="Target role required")
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a compensation expert with deep knowledge of tech salaries. Return ONLY valid JSON."},
+                {"role": "user", "content": f"""
+Estimate the salary range for this candidate based on their resume and target role.
+
+Target Role: {req.target_role}
+Location: {req.location}
+
+Resume:
+{req.resume_text[:2500]}
+
+Return JSON:
+{{
+  "experience_level": "Junior / Mid / Senior / Staff / Principal",
+  "years_experience": <integer estimate>,
+  "salary_range": {{"min": <integer annual USD>, "max": <integer annual USD>, "median": <integer>}},
+  "equity_range": "e.g. $10k-50k RSUs or 0.1-0.5% equity",
+  "factors_positive": ["3-4 things in their background that command higher pay"],
+  "factors_negative": ["2-3 gaps that may lower offers"],
+  "negotiation_tips": ["3 practical salary negotiation tips for this candidate"],
+  "comparable_roles": ["2-3 similar roles they could target with similar or higher pay"]
+}}
+"""}
+            ],
+            max_tokens=700,
+            temperature=0.3,
+        )
+        return json.loads(response.choices[0].message.content.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Salary estimation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI CAREER CHATBOT  (Groq — free & fast)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str        # "user" | "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+
+JOB_INTENT_WORDS = {
+    "job", "jobs", "role", "roles", "position", "positions", "hiring", "hire",
+    "opening", "openings", "vacancy", "vacancies", "find", "search", "looking",
+    "apply", "applications", "listing", "listings", "career", "careers",
+    "work", "opportunity", "opportunities", "internship", "internships",
+    "remote", "full-time", "part-time", "entry level", "senior", "junior",
+}
+
+def _detect_job_intent(text: str) -> Optional[str]:
+    """Return extracted keyword if message is asking about job listings, else None."""
+    lower = text.lower()
+    if not any(w in lower for w in JOB_INTENT_WORDS):
+        return None
+    # Strip common stop words to get a usable search keyword
+    stop = {"find", "me", "some", "any", "a", "an", "the", "for", "in", "at",
+            "jobs", "job", "roles", "role", "positions", "position", "openings",
+            "listings", "opportunities", "can", "you", "show", "give", "list",
+            "are", "there", "what", "available", "i", "want", "need", "looking",
+            "for", "hiring", "open", "apply", "search"}
+    words = [w for w in re.findall(r"[a-z]+", lower) if w not in stop and len(w) > 2]
+    return " ".join(words[:4]) if words else None
+
+def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limit: int = 5) -> list:
+    """Pull relevant jobs from Supabase for chat context."""
+    try:
+        q = build_jobs_query(supabase, country=country, keyword=keyword or None)
+        result = q.order("fetched_at", desc=True).limit(limit).execute()
+        return result.data or []
+    except Exception:
+        return []
+
+@app.post("/chat/")
+async def chat(req: ChatRequest):
+    last_user_msg = next(
+        (m.content for m in reversed(req.messages) if m.role == "user"), ""
+    )
+
+    # Detect if the user is asking about job listings
+    job_keyword = _detect_job_intent(last_user_msg)
+    job_context = ""
+    jobs_data   = []
+    if job_keyword is not None:
+        jobs_data = _fetch_jobs_for_chat(job_keyword or None)
+        if jobs_data:
+            lines = []
+            for j in jobs_data:
+                loc  = j.get("location") or j.get("state") or "Remote"
+                url  = j.get("url") or j.get("job_url") or ""
+                lines.append(
+                    f"- **{j.get('title','Role')}** at {j.get('company','Company')} "
+                    f"({loc}){' — ' + url if url else ''}"
+                )
+            job_context = (
+                "\n\nHere are some real current job listings from our database that match:\n"
+                + "\n".join(lines)
+                + "\n\nShare these with the user and offer tips on applying."
+            )
+
+    system = (
+        "You are Nexus, a friendly expert career co-pilot for LandTheRole.ai. "
+        "You help job seekers with resume tips, ATS optimization, interview prep, "
+        "salary negotiation, LinkedIn profiles, cover letters, and job search strategy. "
+        "Keep responses concise and practical. Use bullet points when listing tips. "
+        "When sharing job listings, present them clearly with company and location. "
+        "Always refer to yourself as Nexus."
+        + job_context
+    )
+
+    msgs = [{"role": "system", "content": system}]
+    for m in req.messages[-12:]:
+        msgs.append({"role": m.role, "content": m.content})
+
+    use_groq = bool(os.getenv("GROQ_API_KEY"))
+    try:
+        if use_groq:
+            resp = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=msgs,
+                max_tokens=600,
+                temperature=0.65,
+            )
+        else:
+            resp = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=msgs,
+                max_tokens=600,
+                temperature=0.65,
+            )
+        return {
+            "reply": resp.choices[0].message.content.strip(),
+            "jobs":  jobs_data,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -831,6 +1193,12 @@ async def health():
             "GET  /jobs/?country=IN|US&keyword=&page=",
             "GET  /jobs/search/?q=&country=IN|US",
             "POST /jobs/refresh/",
+            "POST /generate-cover-letter/",
+            "POST /optimize-linkedin/",
+            "POST /generate-cold-email/",
+            "POST /analyze-skill-gap/",
+            "POST /estimate-salary/",
+            "POST /chat/",
             "GET  /health",
         ]
     }
