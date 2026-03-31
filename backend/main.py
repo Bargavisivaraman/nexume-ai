@@ -492,6 +492,46 @@ async def warmup():
     return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
 
 
+REMOTIVE_CATEGORY_MAP = {
+    "Technology": "software-dev", "Engineering": "software-dev",
+    "Design & Creative": "design", "Marketing": "marketing",
+    "Finance": "finance-legal", "Legal": "finance-legal",
+    "Human Resources": "human-resources", "Sales": "sales",
+    "Business": "business-management-ops", "Research & Science": "data",
+}
+
+async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[str] = None, limit: int = 40) -> list:
+    """Fetch live remote jobs from Remotive (free, no auth required)."""
+    try:
+        params = {"limit": limit}
+        if category: params["category"] = category
+        if keyword:  params["search"] = keyword
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get("https://remotive.com/api/remote-jobs", params=params)
+            resp.raise_for_status()
+            raw = resp.json().get("jobs", [])
+        normalised = []
+        for j in raw:
+            normalised.append({
+                "job_id":           f"rem_{j.get('id','')}",
+                "title":            j.get("title", ""),
+                "company":          j.get("company_name", ""),
+                "location":         j.get("candidate_required_location") or "Remote",
+                "url":              j.get("url", ""),
+                "description":      j.get("description", "")[:600] if j.get("description") else "",
+                "employment_type":  j.get("job_type", "FULLTIME").upper().replace("-",""),
+                "experience_level": "",
+                "is_remote":        True,
+                "industry":         j.get("category", "Technology"),
+                "posted_at":        j.get("publication_date", ""),
+                "country":          "REMOTE",
+                "fetched_at":       j.get("publication_date", ""),
+            })
+        return normalised
+    except Exception as e:
+        print(f"[Remotive] Error: {e}")
+        return []
+
 @app.get("/jobs/")
 async def get_jobs(
     country:          str           = Query("US"),
@@ -520,11 +560,17 @@ async def get_jobs(
         )
         result = q.order("fetched_at", desc=True).range(offset, offset + per_page - 1).execute()
         jobs   = result.data or []
+
+        # If Supabase is empty fall back to live Remotive (free, no key needed)
+        if not jobs:
+            rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
+            jobs = await fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=per_page)
+
         return {
-            "jobs":    jobs,
-            "page":    page,
-            "country": country.upper(),
-            "count":   len(jobs),
+            "jobs":     jobs,
+            "page":     page,
+            "country":  country.upper(),
+            "count":    len(jobs),
             "has_more": len(jobs) == per_page,
         }
     except Exception as e:
