@@ -500,6 +500,81 @@ REMOTIVE_CATEGORY_MAP = {
     "Business": "business-management-ops", "Research & Science": "data",
 }
 
+# ── ADZUNA JOB FETCHER ────────────────────────────────────────────────────────
+async def fetch_adzuna_jobs(
+    keyword:  str = "",
+    location: str = "Los Angeles",
+    page:     int = 1,
+    limit:    int = 50,
+) -> list:
+    """
+    Fetch from Adzuna — aggregates Indeed, Glassdoor, Monster, CareerBuilder,
+    thousands of company career pages, and local job boards.
+    Free tier: 1000 calls/month. Register at developer.adzuna.com
+    """
+    app_id  = os.getenv("ADZUNA_APP_ID", "")
+    app_key = os.getenv("ADZUNA_APP_KEY", "")
+    if not app_id or not app_key:
+        print("[Adzuna] No credentials — set ADZUNA_APP_ID + ADZUNA_APP_KEY")
+        return []
+
+    params: dict = {
+        "app_id":           app_id,
+        "app_key":          app_key,
+        "results_per_page": min(limit, 50),
+        "where":            location,
+        "sort_by":          "date",
+        "content-type":     "application/json",
+    }
+    if keyword:
+        params["what"] = keyword
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"https://api.adzuna.com/v1/api/jobs/us/search/{page}",
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        jobs = []
+        for j in data.get("results", []):
+            salary_min  = j.get("salary_min")
+            salary_max  = j.get("salary_max")
+            loc_areas   = j.get("location", {}).get("area", [])
+            loc_display = j.get("location", {}).get("display_name", location)
+            category    = j.get("category", {}).get("label", "")
+            title       = j.get("title", "")
+            desc        = j.get("description", "")
+
+            jobs.append({
+                "job_id":           f"adzuna_{j.get('id', '')}",
+                "title":            title,
+                "company":          j.get("company", {}).get("display_name", "Unknown"),
+                "location":         loc_display,
+                "state":            "CA" if any("California" in a or "Los Angeles" in a for a in loc_areas) else "",
+                "country":          "US",
+                "job_url":          j.get("redirect_url", ""),
+                "url":              j.get("redirect_url", ""),
+                "employment_type":  "FULLTIME",
+                "experience_level": _classify_experience(title + " " + desc),
+                "industry":         _classify_industry(category + " " + title),
+                "posted_at":        j.get("created", ""),
+                "fetched_at":       j.get("created", ""),
+                "description":      desc[:2000],
+                "salary_min":       int(salary_min) if salary_min else None,
+                "salary_max":       int(salary_max) if salary_max else None,
+                "source":           "Adzuna",
+            })
+
+        print(f"[Adzuna] Fetched {len(jobs)} jobs — '{keyword or 'any'}' in '{location}'")
+        return jobs
+
+    except Exception as e:
+        print(f"[Adzuna] Error: {e}")
+        return []
+
 async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[str] = None, limit: int = 40) -> list:
     """Fetch live remote jobs from Remotive (free, no auth required)."""
     try:
@@ -536,6 +611,7 @@ async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[
 async def get_jobs(
     country:          str           = Query("US"),
     keyword:          Optional[str] = Query(None),
+    location:         Optional[str] = Query(None),   # city/region e.g. "Los Angeles, CA"
     industry:         Optional[str] = Query(None),
     job_type:         Optional[str] = Query(None),
     experience_level: Optional[str] = Query(None),
@@ -561,7 +637,17 @@ async def get_jobs(
         result = q.order("fetched_at", desc=True).range(offset, offset + per_page - 1).execute()
         jobs   = result.data or []
 
-        # If Supabase is empty fall back to live Remotive (free, no key needed)
+        # ── Fallback 1: Adzuna — aggregates Indeed, Glassdoor, Monster, company sites & more ──
+        if not jobs:
+            loc = location or ("Los Angeles, CA" if country.upper() == "US" else "Remote")
+            jobs = await fetch_adzuna_jobs(
+                keyword  = keyword or "",
+                location = loc,
+                page     = page,
+                limit    = max(per_page, 50),
+            )
+
+        # ── Fallback 2: Remotive — remote-only, no location filter ──
         if not jobs:
             rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
             jobs = await fetch_remotive_jobs(keyword=keyword, category=rem_category, limit=max(per_page, 40))

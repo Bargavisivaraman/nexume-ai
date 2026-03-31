@@ -542,7 +542,7 @@ function CompanyAvatar({ name, size = 44 }) {
 function JobsTab({ onPrepInterview }) {
   const [country, setCountry]       = useState("US");
   const [query, setQuery]           = useState("");
-  const [locationQuery, setLocationQuery] = useState("");
+  const [locationQuery, setLocationQuery] = useState("Los Angeles, CA");
   const [jobs, setJobs]             = useState([]);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
@@ -597,6 +597,7 @@ function JobsTab({ onPrepInterview }) {
     try {
       const params = new URLSearchParams({ country: c, page: pg, per_page: 20 });
       if (kw.trim())             params.set("keyword", kw.trim());
+      if (locationQuery.trim())  params.set("location", locationQuery.trim());
       if (f.industry)            params.set("industry", f.industry);
       if (f.jobType)             params.set("job_type", f.jobType);
       if (f.expLevel)            params.set("experience_level", f.expLevel);
