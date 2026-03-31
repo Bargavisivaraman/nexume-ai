@@ -41,8 +41,19 @@ fetch(`${API}/jobs/?country=US&per_page=1`).catch(() => {});
 function Footer() {
   return (
     <footer className="footer">
-      <p><span>LandTheRole.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
+      <p><span>Lumira.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
     </footer>
+  );
+}
+
+// ── FLOATING ORBS ─────────────────────────────────────────────────────────────
+function FloatingOrbs() {
+  return (
+    <div className="orbs-wrap" aria-hidden="true">
+      <div className="orb orb-1" />
+      <div className="orb orb-2" />
+      <div className="orb orb-3" />
+    </div>
   );
 }
 
@@ -269,7 +280,7 @@ function Nav({ tab, setTab, resetApp, theme, setTheme }) {
 
   return (
     <nav className="main-nav">
-      <div className="nav-logo" onClick={() => { resetApp(); setTab("resume"); }}>LandTheRole.ai</div>
+      <div className="nav-logo" onClick={() => { resetApp(); setTab("resume"); }}>Lumira</div>
       <div className="nav-center">
         {tabs.map(t => (
           <button
@@ -1214,7 +1225,7 @@ function ResumePage() {
   if (!result) return (
     <div className="hero">
       <div className="card">
-        <div className="logo-tag">LandTheRole.ai</div>
+        <div className="logo-tag">Lumira.ai</div>
         <h1>Get Hired Faster</h1>
         <p>Upload your resume and get a full ATS score, keyword gap analysis, and bullet rewrites.</p>
         <div className="upload-row">
@@ -1977,11 +1988,23 @@ function SalaryTool() {
 }
 
 // ── APP ROOT ──────────────────────────────────────────────────────────────────
+const TAB_ORDER = ["resume","cover","jobs","interview","tracker","tools"];
+
 function App() {
   const [tab, setTab]               = useState("resume");
+  const [transDir, setTransDir]     = useState("forward");
+  const tabRef                      = useRef("resume");
   const [interviewTitle, setInterviewTitle]   = useState(null);
   const [interviewCompany, setInterviewCompany] = useState(null);
   const [theme, setThemeState]      = useState(() => localStorage.getItem("ltr_theme") || "dark");
+
+  const switchTab = useCallback((newTab) => {
+    const oldIdx = TAB_ORDER.indexOf(tabRef.current);
+    const newIdx = TAB_ORDER.indexOf(newTab);
+    setTransDir(newIdx >= oldIdx ? "forward" : "backward");
+    tabRef.current = newTab;
+    setTab(newTab);
+  }, []);
 
   const setTheme = (t) => {
     setThemeState(t);
@@ -1995,7 +2018,7 @@ function App() {
   const handlePrepInterview = (title, company) => {
     setInterviewTitle(title);
     setInterviewCompany(company);
-    setTab("interview");
+    switchTab("interview");
   };
 
   const resetApp = () => {
@@ -2005,9 +2028,10 @@ function App() {
 
   return (
     <>
-      <Nav tab={tab} setTab={setTab} resetApp={resetApp} theme={theme} setTheme={setTheme} />
+      <FloatingOrbs />
+      <Nav tab={tab} setTab={switchTab} resetApp={resetApp} theme={theme} setTheme={setTheme} />
       <main className="main-content">
-        <div className="tab-panel" key={tab}>
+        <div className="tab-panel" key={tab} data-dir={transDir}>
           {tab === "resume"    && <ResumePage />}
           {tab === "cover"     && <CoverLetterPage />}
           {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} />}
