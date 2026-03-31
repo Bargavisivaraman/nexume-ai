@@ -1103,11 +1103,46 @@ def _detect_job_intent(text: str) -> Optional[str]:
     return " ".join(words[:4]) if words else None
 
 def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limit: int = 5) -> list:
-    """Pull relevant jobs from Supabase for chat context."""
+    """Pull relevant jobs: tries Supabase first, then falls back to live JSearch."""
+    # 1. Try Supabase
     try:
         q = build_jobs_query(supabase, country=country, keyword=keyword or None)
         result = q.order("fetched_at", desc=True).limit(limit).execute()
-        return result.data or []
+        rows = result.data or []
+        if rows:
+            return rows
+    except Exception:
+        pass
+
+    # 2. Fall back to live JSearch if Supabase has nothing
+    if not JSEARCH_API_KEY:
+        return []
+    try:
+        import httpx as _httpx
+        query_str = f"{keyword or 'software engineer'} {country}"
+        resp = _httpx.get(
+            f"{JSEARCH_BASE}/search",
+            headers={
+                "X-RapidAPI-Key":  JSEARCH_API_KEY,
+                "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+            },
+            params={"query": query_str, "num_pages": "1", "date_posted": "week"},
+            timeout=12.0,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("data") or []
+        # Normalise to the shape the frontend expects
+        normalised = []
+        for j in raw[:limit]:
+            normalised.append({
+                "title":           j.get("job_title", ""),
+                "company":         j.get("employer_name", ""),
+                "location":        j.get("job_city") or j.get("job_state") or j.get("job_country") or "Remote",
+                "url":             j.get("job_apply_link") or j.get("job_google_link") or "",
+                "employment_type": j.get("job_employment_type", ""),
+                "experience_level": "",
+            })
+        return normalised
     except Exception:
         return []
 
@@ -1144,6 +1179,8 @@ async def chat(req: ChatRequest):
         "salary negotiation, LinkedIn profiles, cover letters, and job search strategy. "
         "Keep responses concise and practical. Use bullet points when listing tips. "
         "When sharing job listings, present them clearly with company and location. "
+        "If no job listings are provided in context, tell the user to check the Jobs tab at the top of the page for live listings, and offer advice on their search instead. "
+        "Never say listings are 'not available' — always offer next steps. "
         "Always refer to yourself as Nexus."
         + job_context
     )
