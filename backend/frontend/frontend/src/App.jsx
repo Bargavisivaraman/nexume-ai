@@ -1260,12 +1260,6 @@ function ResumePage() {
           {loading && <span className="spinner" />}
           {loading ? "Analyzing…" : "Analyze My Resume"}
         </button>
-        <div className="feature-pills">
-          <span>◆ ATS Score</span>
-          <span>◆ JD Match %</span>
-          <span>◆ AI Rewrites</span>
-          <span>◆ History</span>
-        </div>
         {error && <p className="error-msg">{error}</p>}
       </div>
       {history.length > 0 && (

@@ -305,8 +305,18 @@ h1 { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; margin-bottom: 1
 .card > p { color: var(--text-muted); font-size: 15px; margin-bottom: 28px; line-height: 1.65; }
 .upload-row { display: flex; justify-content: center; margin-bottom: 12px; }
 .file-label input[type="file"] { display: none; }
-.file-btn { display: inline-block; padding: 12px 22px; border-radius: 14px; border: 1.5px dashed var(--border); color: var(--text-muted); font-size: 14px; cursor: pointer; transition: all 0.3s; background: var(--surface2); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-btn:hover { border-color: var(--primary); background: rgba(123,47,247,0.08); color: var(--text); }
+.file-btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 13px 28px; border-radius: 12px;
+  border: 1.5px solid var(--border);
+  color: var(--text); font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all 0.25s;
+  background: var(--surface2);
+  max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+.file-btn::before { content: "📄"; font-size: 16px; }
+.file-btn:hover { border-color: var(--primary); background: rgba(123,47,247,0.1); color: var(--text); box-shadow: 0 4px 16px rgba(123,47,247,0.15); transform: translateY(-1px); }
 .jd-toggle { margin-bottom: 12px; }
 .jd-toggle-btn { background: transparent; border: 1px solid var(--border2); color: var(--text-dim); font-size: 13px; padding: 7px 16px; border-radius: 20px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
 .jd-toggle-btn:hover { border-color: var(--primary-light); color: var(--primary-light); }
@@ -874,12 +884,13 @@ li::before { content: "→"; position: absolute; left: 0; color: var(--text-dim)
 
 /* How it works */
 .landing-how { width: 100%; max-width: var(--page-max); margin: 52px auto 0; padding: 0 32px 80px; }
-.how-steps { display: flex; align-items: flex-start; justify-content: center; gap: 0; }
+.how-steps { display: flex; align-items: stretch; justify-content: center; gap: 0; }
 .how-step {
   flex: 1; max-width: 240px; text-align: center;
   background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 28px 20px;
   transition: transform 0.3s cubic-bezier(0.22,1,0.36,1), box-shadow 0.3s, border-color 0.3s;
   animation: featureCardIn 0.55s cubic-bezier(0.22,1,0.36,1) both;
+  min-height: 160px;
 }
 .how-step:nth-child(1) { animation-delay: 0.1s; }
 .how-step:nth-child(3) { animation-delay: 0.2s; }
