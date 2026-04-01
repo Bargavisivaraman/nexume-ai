@@ -699,7 +699,7 @@ function JobsTab({ onPrepInterview }) {
         />
         <button className="jobs-search-btn" onClick={search}>Search</button>
         <div className="jobs-country-pills">
-          {[["US","🇺🇸 US"],["IN","🇮🇳 India"]].map(([code, label]) => (
+          {[["US","🇺🇸 US"]].map(([code, label]) => (
             <button
               key={code}
               className={`jobs-country-pill${country === code ? " active" : ""}`}
@@ -1422,7 +1422,7 @@ function CoverLetterPage() {
   return (
     <div className="cover-page">
       <div className="page-banner">
-        <h2>✉ Cover Letter Generator</h2>
+        <h2>Cover Letter Generator</h2>
         <p>Paste your resume + job description and get a tailored cover letter in seconds</p>
       </div>
       <div className="cover-layout">
