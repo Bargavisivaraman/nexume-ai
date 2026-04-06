@@ -985,7 +985,7 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
         <p>Get tailored questions from any job description. Practice your answers and get AI feedback.</p>
       </div>
       <div className="interview-inner">
-      {!questions ? (
+      {questions === null ? (
         <div className="interview-setup">
           {prefillTitle && (
             <div className="prefill-banner">
@@ -1817,7 +1817,7 @@ function ColdEmailTool() {
       <textarea className="interview-textarea" rows={4} placeholder="Paste a few bullet points from your resume…" value={form.resume_text} onChange={e => setForm(f => ({ ...f, resume_text: e.target.value }))} />
       {error && <p className="error-msg" style={{ marginTop: 10 }}>{error}</p>}
       <button className="analyze-btn" onClick={run} disabled={loading} style={{ marginTop: 20 }}>
-        {loading ? <><span className="spinner" /> Generating…</> : "✉ Write Cold Email"}
+        {loading ? <><span className="spinner" /> Generating…</> : "Write Cold Email"}
       </button>
 
       {result && (
