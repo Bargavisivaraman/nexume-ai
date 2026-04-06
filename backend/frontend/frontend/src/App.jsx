@@ -986,7 +986,7 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
       { threshold: 0.06 }
     );
     const timer = setTimeout(() => {
-      document.querySelectorAll(".interview-results .reveal, .interview-results .question-card").forEach((el) => observer.observe(el));
+      document.querySelectorAll(".interview-results .reveal").forEach((el) => observer.observe(el));
     }, 60);
     return () => { clearTimeout(timer); observer.disconnect(); };
   }, [questions]);
@@ -1049,7 +1049,7 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
 
           <div className="questions-list">
             {questions.map((q, i) => (
-              <div key={q.id} className={`question-card reveal ${activeQ === q.id ? "expanded" : ""}`}>
+              <div key={q.id} className={`question-card ${activeQ === q.id ? "expanded" : ""}`}>
                 <div className="question-header" onClick={() => setActiveQ(activeQ === q.id ? null : q.id)}>
                   <div className="question-left">
                     <span className="q-num">Q{i + 1}</span>
