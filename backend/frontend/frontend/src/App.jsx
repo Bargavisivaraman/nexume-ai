@@ -41,7 +41,7 @@ fetch(`${API}/jobs/?country=US&per_page=1`).catch(() => {});
 function Footer() {
   return (
     <footer className="footer">
-      <p><span>Lumira.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
+      <p><span>Nexume.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
     </footer>
   );
 }
@@ -280,7 +280,7 @@ function Nav({ tab, setTab, resetApp, theme, setTheme }) {
 
   return (
     <nav className="main-nav">
-      <div className="nav-logo" onClick={() => { resetApp(); setTab("resume"); }}>Lumira</div>
+      <div className="nav-logo" onClick={() => { resetApp(); setTab("resume"); }}>Nexume</div>
       <div className="nav-center">
         {tabs.map(t => (
           <button
@@ -727,7 +727,7 @@ function JobsTab({ onPrepInterview }) {
           <div className="jobs-filter-section">
             <span className="jobs-filter-label">Job Type</span>
             <div className="jobs-filter-chips">
-              {[["FULLTIME","Full-time"],["PARTTIME","Part-time"],["CONTRACTOR","Contract"],["INTERN","Internship"]].map(([val, label]) => (
+              {[["Full-time","Full-time"],["Part-time","Part-time"],["Contract","Contract"],["Internship","Internship"]].map(([val, label]) => (
                 <button
                   key={val}
                   className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
@@ -794,7 +794,7 @@ function JobsTab({ onPrepInterview }) {
 
           {/* Mobile horizontal filter row */}
           <div className="jobs-mobile-filters">
-            {[["FULLTIME","Full-time"],["PARTTIME","Part-time"],["CONTRACTOR","Contract"],["INTERN","Internship"]].map(([val, label]) => (
+            {[["Full-time","Full-time"],["Part-time","Part-time"],["Contract","Contract"],["Internship","Internship"]].map(([val, label]) => (
               <button
                 key={val}
                 className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
@@ -977,6 +977,19 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
 
   const typeColors = { technical: "#0a84ff", behavioral: "#30d158", situational: "#ffd60a", culture: "#bf5af2" };
   const scoreColor = (s) => s >= 80 ? "#30d158" : s >= 60 ? "#ffd60a" : "#ff453a";
+
+  // Animate reveal elements when questions load
+  useEffect(() => {
+    if (!questions) return;
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add("in-view"); }),
+      { threshold: 0.06 }
+    );
+    const timer = setTimeout(() => {
+      document.querySelectorAll(".interview-results .reveal, .interview-results .question-card").forEach((el) => observer.observe(el));
+    }, 60);
+    return () => { clearTimeout(timer); observer.disconnect(); };
+  }, [questions]);
 
   return (
     <div className="interview-page">
@@ -1231,7 +1244,7 @@ function ResumePage() {
   if (!result) return (
     <div className="hero">
       <div className="card">
-        <div className="logo-tag">Lumira.ai</div>
+        <div className="logo-tag">Nexume.ai</div>
         <h1>Get Hired Faster</h1>
         <p>Upload your resume and get a full ATS score, keyword gap analysis, and bullet rewrites.</p>
         <div className="upload-row">
