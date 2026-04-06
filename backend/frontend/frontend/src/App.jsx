@@ -941,6 +941,8 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
   const [answers, setAnswers] = useState({});
   const [evaluations, setEvaluations] = useState({});
   const [evaluating, setEvaluating] = useState({});
+  const [recording, setRecording] = useState({});
+  const recognitionRefs = useRef({});
 
   const generate = async () => {
     if (!jd.trim() || jd.trim().length < 50) return alert("Please paste a job description (at least 50 characters)");
@@ -973,6 +975,33 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
       setEvaluations(prev => ({ ...prev, [q.id]: data }));
     } catch { alert("Evaluation failed. Try again."); }
     finally { setEvaluating(prev => ({ ...prev, [q.id]: false })); }
+  };
+
+  const toggleRecording = (qId) => {
+    if (recording[qId]) {
+      recognitionRefs.current[qId]?.stop();
+      setRecording(prev => ({ ...prev, [qId]: false }));
+    } else {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return alert("Voice recording isn't supported in this browser. Use Chrome.");
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+      let final = answers[qId] || "";
+      rec.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) final += e.results[i][0].transcript + " ";
+          else interim = e.results[i][0].transcript;
+        }
+        setAnswers(prev => ({ ...prev, [qId]: final + interim }));
+      };
+      rec.onend = () => setRecording(prev => ({ ...prev, [qId]: false }));
+      recognitionRefs.current[qId] = rec;
+      rec.start();
+      setRecording(prev => ({ ...prev, [qId]: true }));
+    }
   };
 
   const typeColors = { technical: "#0a84ff", behavioral: "#30d158", situational: "#ffd60a", culture: "#bf5af2" };
@@ -1072,10 +1101,19 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
                       <ul>{(q.good_answer_hints || []).map((h, j) => <li key={j}>{h}</li>)}</ul>
                     </div>
                     <div className="answer-section">
-                      <label className="field-label">Your Answer</label>
+                      <div className="answer-label-row">
+                        <label className="field-label" style={{margin:0}}>Your Answer</label>
+                        <button className={`mic-btn ${recording[q.id] ? "mic-active" : ""}`} onClick={() => toggleRecording(q.id)} title={recording[q.id] ? "Stop recording" : "Record your answer"}>
+                          {recording[q.id] ? (
+                            <><span className="mic-dot" /> Stop Recording</>
+                          ) : (
+                            <><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3zm7 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg> Record Answer</>
+                          )}
+                        </button>
+                      </div>
                       <textarea
                         className="answer-textarea"
-                        placeholder="Type your answer here and get instant AI feedback…"
+                        placeholder={recording[q.id] ? "Listening… speak your answer" : "Record or type your answer here…"}
                         value={answers[q.id] || ""}
                         onChange={e => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
                         rows={5}
