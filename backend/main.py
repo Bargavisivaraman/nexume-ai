@@ -14,6 +14,9 @@ from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timezone, timedelta
 import re
+import hashlib
+import time
+from starlette.middleware.gzip import GZipMiddleware
 
 # Jobs pipeline (real data only — no mock/fake jobs)
 from jobs import (
@@ -33,6 +36,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLIENTS
@@ -53,6 +57,29 @@ supabase: Client = create_client(
 
 JSEARCH_API_KEY = os.getenv("JSEARCH_API_KEY")
 JSEARCH_BASE    = "https://jsearch.p.rapidapi.com"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IN-MEMORY ANALYSIS CACHE
+# ─────────────────────────────────────────────────────────────────────────────
+
+_analysis_cache: dict = {}
+_CACHE_TTL = 3600  # 1 hour
+
+def _cache_key(contents: bytes, jd: str) -> str:
+    return hashlib.md5(contents + jd.encode("utf-8", errors="ignore")).hexdigest()
+
+def _cache_get(key: str) -> Optional[dict]:
+    entry = _analysis_cache.get(key)
+    if entry and time.monotonic() - entry["ts"] < _CACHE_TTL:
+        return entry["data"]
+    _analysis_cache.pop(key, None)
+    return None
+
+def _cache_set(key: str, data: dict) -> None:
+    if len(_analysis_cache) >= 500:
+        oldest = min(_analysis_cache, key=lambda k: _analysis_cache[k]["ts"])
+        del _analysis_cache[oldest]
+    _analysis_cache[key] = {"data": data, "ts": time.monotonic()}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -928,7 +955,7 @@ async def generate_interview(req: InterviewRequest):
     resume_context = f"\nCandidate Resume:\n{req.resume_text[:3000]}" if req.resume_text and req.resume_text.strip() else ""
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -974,7 +1001,7 @@ Return this exact JSON:
             ],
             max_tokens=2500,
             temperature=0.4,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Model returned invalid JSON")
@@ -993,7 +1020,7 @@ async def evaluate_answer(req: EvaluateRequest):
     resume_ctx = f"\nCandidate Resume:\n{req.resume_text[:1500]}"    if req.resume_text    else ""
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1034,7 +1061,7 @@ Return this exact JSON:
             ],
             max_tokens=1000,
             temperature=0.3,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Model returned invalid JSON")
@@ -1058,10 +1085,21 @@ async def analyze_resume(
     if len(contents) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 5MB limit")
 
+    job_description = sanitize_text(job_description or "")
+
+    # Return cached result for identical file+JD (avoids repeat OpenAI charges and latency)
+    ck = _cache_key(contents, job_description)
+    cached = _cache_get(ck)
+    if cached:
+        return cached
+
+    # PDF parsing is CPU-bound — run in thread pool so event loop stays free for other requests
     try:
-        text = extract_text_from_pdf(contents)
+        text = await asyncio.to_thread(extract_text_from_pdf, contents)
         if not text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from PDF")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to process PDF file")
 
@@ -1078,10 +1116,12 @@ async def analyze_resume(
             "weak_bullets": [], "jd_match": None,
         }
 
-    job_description = sanitize_text(job_description or "")
-    ats_score, ats_breakdown = calculate_ats_score(text, job_description)
-    weak_bullets = extract_weak_bullets(text)
-    jd_match     = analyze_jd_match(text, job_description) if job_description and job_description.strip() else None
+    # Local scoring is CPU-bound — run both in parallel threads so they don't block each other
+    (ats_score, ats_breakdown), weak_bullets = await asyncio.gather(
+        asyncio.to_thread(calculate_ats_score, text, job_description),
+        asyncio.to_thread(extract_weak_bullets, text),
+    )
+    jd_match = analyze_jd_match(text, job_description) if job_description.strip() else None
 
     qi = ats_breakdown["quantification"]
     vi = ats_breakdown["action_verbs"]
@@ -1099,7 +1139,8 @@ Keywords: {ki['total_keywords_found']} total across {ki['domains_covered']} doma
     )
 
     try:
-        response = openai_client.chat.completions.create(
+        # OpenAI SDK is synchronous — run in thread pool to avoid blocking the event loop
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1124,7 +1165,7 @@ Return this exact JSON:
             ],
             max_tokens=1200,
             temperature=0.3,
-        )
+        ))
         out = json.loads(response.choices[0].message.content.strip())
         out["ats_score"]     = ats_score
         out["ats_breakdown"] = ats_breakdown
@@ -1135,6 +1176,7 @@ Return this exact JSON:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {str(e)}")
 
+    _cache_set(ck, out)
     return out
 
 
@@ -1150,7 +1192,7 @@ async def rewrite_bullet(req: RewriteRequest):
     job_hint = f"\nJob context: {req.job_context}" if req.job_context else ""
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1176,7 +1218,7 @@ Return JSON:
             ],
             max_tokens=300,
             temperature=0.5,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Rewrite failed: {str(e)}")
@@ -1198,7 +1240,7 @@ async def generate_cover_letter(req: CoverLetterRequest):
     if len(req.job_description.strip()) < 50:
         raise HTTPException(status_code=400, detail="Job description too short")
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1232,7 +1274,7 @@ Return JSON:
             ],
             max_tokens=800,
             temperature=0.5,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {str(e)}")
@@ -1251,7 +1293,7 @@ async def optimize_linkedin(req: LinkedInRequest):
     if len(req.linkedin_summary.strip()) < 50:
         raise HTTPException(status_code=400, detail="Summary too short")
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1275,7 +1317,7 @@ Return JSON:
             ],
             max_tokens=700,
             temperature=0.4,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LinkedIn optimization failed: {str(e)}")
@@ -1297,7 +1339,7 @@ async def generate_cold_email(req: ColdEmailRequest):
         raise HTTPException(status_code=400, detail="Job title and company are required")
     resume_ctx = f"\nMy Resume:\n{req.resume_text[:1500]}" if req.resume_text else ""
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1324,7 +1366,7 @@ Return JSON:
             ],
             max_tokens=500,
             temperature=0.6,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
@@ -1345,7 +1387,7 @@ async def analyze_skill_gap(req: SkillGapRequest):
     if not req.target_role.strip():
         raise HTTPException(status_code=400, detail="Target role required")
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1374,7 +1416,7 @@ Return JSON:
             ],
             max_tokens=900,
             temperature=0.3,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Skill gap analysis failed: {str(e)}")
@@ -1396,7 +1438,7 @@ async def estimate_salary(req: SalaryRequest):
     if not req.target_role.strip():
         raise HTTPException(status_code=400, detail="Target role required")
     try:
-        response = openai_client.chat.completions.create(
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -1425,7 +1467,7 @@ Return JSON:
             ],
             max_tokens=700,
             temperature=0.3,
-        )
+        ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Salary estimation failed: {str(e)}")
@@ -1464,7 +1506,7 @@ def _detect_job_intent(text: str) -> Optional[str]:
     words = [w for w in re.findall(r"[a-z]+", lower) if w not in stop and len(w) > 2]
     return " ".join(words[:4]) if words else None
 
-def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limit: int = 5) -> list:
+async def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limit: int = 5) -> list:
     """Pull relevant jobs: tries Supabase first, then falls back to live JSearch."""
     # 1. Try Supabase
     try:
@@ -1476,32 +1518,30 @@ def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limit: int
     except Exception:
         pass
 
-    # 2. Fall back to live JSearch if Supabase has nothing
+    # 2. Fall back to live JSearch using async client (never blocks event loop)
     if not JSEARCH_API_KEY:
         return []
     try:
-        import httpx as _httpx
         query_str = f"{keyword or 'software engineer'} {country}"
-        resp = _httpx.get(
-            f"{JSEARCH_BASE}/search",
-            headers={
-                "X-RapidAPI-Key":  JSEARCH_API_KEY,
-                "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-            },
-            params={"query": query_str, "num_pages": "1", "date_posted": "week"},
-            timeout=12.0,
-        )
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(
+                f"{JSEARCH_BASE}/search",
+                headers={
+                    "X-RapidAPI-Key":  JSEARCH_API_KEY,
+                    "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+                },
+                params={"query": query_str, "num_pages": "1", "date_posted": "week"},
+            )
         resp.raise_for_status()
         raw = resp.json().get("data") or []
-        # Normalise to the shape the frontend expects
         normalised = []
         for j in raw[:limit]:
             normalised.append({
-                "title":           j.get("job_title", ""),
-                "company":         j.get("employer_name", ""),
-                "location":        j.get("job_city") or j.get("job_state") or j.get("job_country") or "Remote",
-                "url":             j.get("job_apply_link") or j.get("job_google_link") or "",
-                "employment_type": j.get("job_employment_type", ""),
+                "title":            j.get("job_title", ""),
+                "company":          j.get("employer_name", ""),
+                "location":         j.get("job_city") or j.get("job_state") or j.get("job_country") or "Remote",
+                "url":              j.get("job_apply_link") or j.get("job_google_link") or "",
+                "employment_type":  j.get("job_employment_type", ""),
                 "experience_level": "",
             })
         return normalised
@@ -1519,7 +1559,7 @@ async def chat(req: ChatRequest):
     job_context = ""
     jobs_data   = []
     if job_keyword is not None:
-        jobs_data = _fetch_jobs_for_chat(job_keyword or None)
+        jobs_data = await _fetch_jobs_for_chat(job_keyword or None)
         if jobs_data:
             lines = []
             for j in jobs_data:
@@ -1558,19 +1598,19 @@ async def chat(req: ChatRequest):
     use_groq = bool(os.getenv("GROQ_API_KEY"))
     try:
         if use_groq:
-            resp = groq_client.chat.completions.create(
+            resp = await asyncio.to_thread(lambda: groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=msgs,
                 max_tokens=600,
                 temperature=0.65,
-            )
+            ))
         else:
-            resp = openai_client.chat.completions.create(
+            resp = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=msgs,
                 max_tokens=600,
                 temperature=0.65,
-            )
+            ))
         return {
             "reply": resp.choices[0].message.content.strip(),
             "jobs":  jobs_data,

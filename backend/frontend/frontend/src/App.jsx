@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import "./App.css";
 
 // ── ATS BREAKDOWN ─────────────────────────────────────────────────────────────
@@ -35,19 +35,19 @@ function ATSBreakdown({ breakdown }) {
 const API = "https://landtherole-ai.onrender.com";
 
 // Fire-and-forget warm-up ping so Render server is hot before first user action
-fetch(`${API}/jobs/?country=US&per_page=1`).catch(() => {});
+fetch(`${API}/warmup`).catch(() => {});
 
 // ── FOOTER ────────────────────────────────────────────────────────────────────
-function Footer() {
+const Footer = memo(function Footer() {
   return (
     <footer className="footer">
       <p><span>Nexume.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
     </footer>
   );
-}
+});
 
 // ── FLOATING ORBS ─────────────────────────────────────────────────────────────
-function FloatingOrbs() {
+const FloatingOrbs = memo(function FloatingOrbs() {
   return (
     <div className="orbs-wrap" aria-hidden="true">
       <div className="orb orb-1" />
@@ -55,7 +55,7 @@ function FloatingOrbs() {
       <div className="orb orb-3" />
     </div>
   );
-}
+});
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
 const NAV_ICONS = {
@@ -163,7 +163,7 @@ function SettingsModal({ onClose, theme, setTheme }) {
 }
 
 // ── CHATBOT ────────────────────────────────────────────────────────────────────
-function ChatBot() {
+const ChatBot = memo(function ChatBot() {
   const [open, setOpen]       = useState(false);
   const [msgs, setMsgs]       = useState([{ role:"assistant", content:"Hey, I'm Nexus ✨ Your AI career co-pilot. Ask me anything. Resume tips, interview prep, salary negotiation, job search strategy." }]);
   const [input, setInput]     = useState("");
@@ -265,7 +265,7 @@ function ChatBot() {
       )}
     </>
   );
-}
+});
 
 function Nav({ tab, setTab, resetApp, theme, setTheme }) {
   const [showSettings, setShowSettings] = useState(false);
@@ -1173,6 +1173,14 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
 }
 
 // ── RESUME PAGE ───────────────────────────────────────────────────────────────
+const ANALYSIS_STEPS = [
+  "Uploading resume…",
+  "Parsing PDF content…",
+  "Scoring ATS metrics…",
+  "Running AI analysis…",
+  "Finalizing report…",
+];
+
 const HISTORY_KEY = "ltr_history";
 
 function loadHistory() {
@@ -1198,6 +1206,7 @@ function ResumePage() {
   const [jdText, setJdText]       = useState("");
   const [result, setResult]       = useState(null);
   const [loading, setLoading]     = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [error, setError]         = useState(null);
   const [jdExpanded, setJdExpanded] = useState(false);
   const [history, setHistory]     = useState(loadHistory);
@@ -1207,10 +1216,19 @@ function ResumePage() {
 
   const handleUpload = async () => {
     if (!file) { setError("Please select a PDF file first."); return; }
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setLoadingStep(0);
     const formData = new FormData();
     formData.append("file", file);
     if (jdText.trim()) formData.append("job_description", jdText.trim());
+
+    // Advance progress steps during the request to show activity even before server responds
+    const stepTimers = [
+      setTimeout(() => setLoadingStep(1), 700),
+      setTimeout(() => setLoadingStep(2), 2200),
+      setTimeout(() => setLoadingStep(3), 4000),
+      setTimeout(() => setLoadingStep(4), 7500),
+    ];
+    const clearSteps = () => stepTimers.forEach(clearTimeout);
 
     const MAX_RETRIES = 3;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -1219,6 +1237,7 @@ function ResumePage() {
         const res = await fetch(`${API}/analyze-resume/`, { method: "POST", body: formData });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Failed to analyze resume");
+        clearSteps();
         setError(null);
         setResult(data);
         setHistory(saveToHistory(file, data));
@@ -1233,6 +1252,7 @@ function ResumePage() {
           await new Promise(r => setTimeout(r, attempt * 8000));
           continue;
         }
+        clearSteps();
         setError(isColdStart
           ? "⏳ Server is still waking up. Please wait 30 seconds and try again."
           : err.message);
@@ -1309,8 +1329,13 @@ function ResumePage() {
         )}
         <button className="analyze-btn" onClick={handleUpload} disabled={loading}>
           {loading && <span className="spinner" />}
-          {loading ? "Analyzing…" : "Analyze My Resume"}
+          {loading ? ANALYSIS_STEPS[loadingStep] : "Analyze My Resume"}
         </button>
+        {loading && (
+          <div style={{width:"100%",height:3,background:"rgba(255,255,255,0.08)",borderRadius:2,marginTop:8,overflow:"hidden"}}>
+            <div style={{height:"100%",background:"linear-gradient(90deg,#7b2ff7,#0a84ff)",width:`${(loadingStep+1)/ANALYSIS_STEPS.length*100}%`,transition:"width 0.6s ease",borderRadius:2}} />
+          </div>
+        )}
         {error && <p className="error-msg">{error}</p>}
       </div>
       {history.length > 0 && (
