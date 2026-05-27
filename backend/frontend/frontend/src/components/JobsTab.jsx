@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import useSavedJobs from "../hooks/useSavedJobs";
+import JobsStatusBar from "./JobsStatusBar";
+import { filterJobsForRole, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -646,16 +648,37 @@ export default function JobsTab({ onPrepInterview }) {
     return `${Math.floor(d / 7)}w ago`;
   };
 
-  // Client-side salary filter (applied on top of server-side filters)
-  const visibleJobs = (viewMode === "saved" ? saved : jobs).filter(j => {
+  // Resolve picked role for strict matching
+  const activeMajorData = activeMajor ? MAJOR_BY_ID[activeMajor] : null;
+  const activeRoleData = activeRoleId => activeRoleId && activeMajorData
+    ? activeMajorData.roles.find(r => r.id === activeRoleId)
+    : null;
+  const pickedRole = activeRoleData(activeRole);
+
+  // Step 1: salary filter
+  const salaryFiltered = (viewMode === "saved" ? saved : jobs).filter(j => {
     if (salary[0] === 0 && salary[1] >= 400000) return true;
     const jmin = j.salary_min;
     const jmax = j.salary_max;
-    if (jmin == null && jmax == null) return true; // unknown — don't hide
+    if (jmin == null && jmax == null) return true;
     const lo = jmin ?? jmax;
     const hi = jmax ?? jmin;
     return hi >= salary[0] && lo <= salary[1];
   });
+
+  // Step 2: STRICT role-matcher filter (only when a role is picked)
+  // Hard-rejects unrelated titles, scores remaining 0-100, drops < threshold.
+  const visibleJobs = pickedRole
+    ? filterJobsForRole(salaryFiltered, pickedRole, activeMajorData)
+    : salaryFiltered;
+
+  const filteredOutCount = pickedRole ? salaryFiltered.length - visibleJobs.length : 0;
+
+  // helper: is this job freshly fetched (< 1 hour)?
+  const isFresh = (job) => {
+    if (!job.fetched_at) return false;
+    return (Date.now() - new Date(job.fetched_at).getTime()) < 3600_000;
+  };
 
   return (
     <div className="jobs-page">
@@ -787,6 +810,9 @@ export default function JobsTab({ onPrepInterview }) {
 
         {/* Main column */}
         <main className="jobs-main">
+          {/* Live status bar — total jobs, last updated, source health */}
+          <JobsStatusBar />
+
           {/* Mobile horizontal filter row */}
           <div className="jobs-mobile-filters">
             <button
@@ -848,8 +874,17 @@ export default function JobsTab({ onPrepInterview }) {
                     <span className="jobs-result-count">
                       <strong>{visibleJobs.length}</strong> {viewMode === "saved" ? "saved" : "matching"} job{visibleJobs.length !== 1 ? "s" : ""}
                       {hasActiveFilters && viewMode === "all" ? " · filtered" : ""}
+                      {pickedRole && filteredOutCount > 0 && (
+                        <span className="jobs-result-filtered-out"> · {filteredOutCount} hidden as off-target</span>
+                      )}
                     </span>
-                    {resumeKeywords.current && viewMode === "all" && (
+                    {pickedRole && (
+                      <span className="jobs-result-pill">
+                        <span className="jobs-result-pill-dot" />
+                        Strict role match · ≥{RELEVANCE_THRESHOLD}% relevance
+                      </span>
+                    )}
+                    {resumeKeywords.current && viewMode === "all" && !pickedRole && (
                       <span className="jobs-result-pill">
                         <span className="jobs-result-pill-dot" /> AI matching active
                       </span>
@@ -896,7 +931,16 @@ export default function JobsTab({ onPrepInterview }) {
                           {job.location && <div className="li-job-location">{job.location}</div>}
                         </div>
                         <div className="li-card-side">
-                          {score != null && (
+                          {pickedRole && job._relevance != null && (
+                            <div className="match-badge relevance-badge" title={`Role relevance · ${job._relevance}/100`} style={{
+                              color: job._relevance >= 80 ? "#22e597" : job._relevance >= 65 ? "#c084fc" : "#ffce47",
+                              borderColor: job._relevance >= 80 ? "rgba(34,229,151,0.45)" : job._relevance >= 65 ? "rgba(192,132,252,0.45)" : "rgba(255,206,71,0.4)",
+                            }}>
+                              <span className="match-badge-num">{job._relevance}</span>
+                              <span className="match-badge-label">role fit</span>
+                            </div>
+                          )}
+                          {!pickedRole && score != null && (
                             <div className="match-badge" title="AI match against your resume" style={{
                               color: score >= 70 ? "#22e597" : score >= 40 ? "#ffce47" : "#94a3b8",
                               borderColor: score >= 70 ? "rgba(34,229,151,0.4)" : score >= 40 ? "rgba(255,206,71,0.4)" : "rgba(148,163,184,0.3)",
@@ -905,6 +949,7 @@ export default function JobsTab({ onPrepInterview }) {
                               <span className="match-badge-label">match</span>
                             </div>
                           )}
+                          {isFresh(job) && <span className="fresh-badge">NEW</span>}
                           {timeAgo && <span className="li-time">{timeAgo}</span>}
                         </div>
                       </div>

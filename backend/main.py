@@ -493,16 +493,48 @@ async def refresh_all_jobs():
 
 scheduler = AsyncIOScheduler()
 
+
+async def _scheduled_ats_ingestion(tier: str):
+    """Wrapper used by APScheduler to run an ATS ingestion tier without blocking."""
+    try:
+        from aggregators import run_ats_ingestion
+        await run_ats_ingestion(supabase, tier=tier)
+    except Exception as e:
+        print(f"[Scheduler] ATS tier={tier} failed: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
-    # Refresh every 8 hours — tune to match your JSearch plan:
-    #   Free: 500 req/mo → set hours=24
-    #   Basic ($10): 3000 req/mo → set hours=8
-    #   Pro ($30): 20000 req/mo → set hours=2
-    # scheduler.add_job(refresh_all_jobs, "interval", hours=8, id="job_refresh")
-    # scheduler.start()
-    # asyncio.create_task(refresh_all_jobs())  # disabled: JSearch quota exceeded
-    print("[Startup] Job refresh disabled (JSearch quota exceeded).")
+    """
+    Auto-fetch new jobs from public ATS boards:
+      tier1 every 5 min   — ~30 highest-demand companies (Stripe, OpenAI, Spotify, etc.)
+      tier2 every 30 min  — broader 50+ company set
+      tier3 every 6 hours — long-tail companies
+
+    Plus an initial tier1 run 30 seconds after boot so first-load users see fresh data.
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", minutes=5,
+        args=["tier1"], id="ats_tier1",
+        next_run_time=_dt.now(timezone.utc) + _td(seconds=30),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", minutes=30,
+        args=["tier2"], id="ats_tier2",
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=2),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", hours=6,
+        args=["tier3"], id="ats_tier3",
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=10),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.start()
+    print("[Startup] ATS scheduler enabled — tier1=5min, tier2=30min, tier3=6h")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -941,6 +973,81 @@ async def ingestion_status():
 async def manual_refresh():
     asyncio.create_task(refresh_all_jobs())
     return {"message": "Ingestion triggered — check /jobs/status/ for progress"}
+
+
+@app.get("/jobs/stats")
+async def jobs_stats():
+    """
+    Live stats for the Jobs tab status bar.
+
+    Returns:
+      - total_jobs:        count of active jobs in DB
+      - last_updated:      newest fetched_at timestamp (any source)
+      - new_in_last_hour:  count of jobs with fetched_at within last 60 min
+      - sources:           per-source counts (Greenhouse / Lever / Ashby / Workable / JSearch / etc.)
+      - recent_runs:       last 3 ingestion_runs entries
+      - next_run:          next scheduled tier1 run time (ISO)
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        one_hour_ago = (now - timedelta(hours=1)).isoformat()
+
+        total = (
+            supabase.table("jobs").select("job_id", count="exact")
+            .eq("is_active", True).limit(1).execute().count
+        ) or 0
+
+        latest = (
+            supabase.table("jobs").select("fetched_at")
+            .order("fetched_at", desc=True).limit(1).execute().data
+        )
+        last_updated = latest[0]["fetched_at"] if latest else None
+
+        new_count = (
+            supabase.table("jobs").select("job_id", count="exact")
+            .gte("fetched_at", one_hour_ago).limit(1).execute().count
+        ) or 0
+
+        # Source counts — keep cheap, only common sources
+        source_counts = {}
+        for s in ("Greenhouse", "Lever", "Ashby", "Workable"):
+            try:
+                c = (
+                    supabase.table("jobs").select("job_id", count="exact")
+                    .eq("source_name", s).limit(1).execute().count
+                )
+                source_counts[s] = c or 0
+            except Exception:
+                source_counts[s] = None
+
+        try:
+            runs = (
+                supabase.table("ingestion_runs").select("*")
+                .order("created_at", desc=True).limit(3).execute().data
+            )
+        except Exception:
+            runs = []
+
+        # Next scheduled tier1 run
+        next_run = None
+        try:
+            tier1_job = scheduler.get_job("ats_tier1")
+            if tier1_job and tier1_job.next_run_time:
+                next_run = tier1_job.next_run_time.isoformat()
+        except Exception:
+            pass
+
+        return {
+            "total_jobs":        total,
+            "last_updated":      last_updated,
+            "new_in_last_hour":  new_count,
+            "sources":           source_counts,
+            "recent_runs":       runs,
+            "next_run":          next_run,
+            "server_time":       now.isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/jobs/ingest-ats")

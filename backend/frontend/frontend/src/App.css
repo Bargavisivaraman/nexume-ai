@@ -1959,6 +1959,124 @@ li::before {
   text-align: center;
 }
 
+/* ── Live status bar ─────────────────────────────────────────────────────── */
+.jobs-status-bar {
+  background: var(--g-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--sh-1);
+  transition: all 0.25s var(--e-smooth);
+}
+.jobs-status-bar.loading { opacity: 0.7; }
+.jobs-status-bar.error  { border-color: rgba(255, 77, 109, 0.3); background: rgba(255, 77, 109, 0.04); }
+.jobs-status-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.jobs-status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+.jobs-status-dot.live {
+  background: #22e597;
+  box-shadow: 0 0 12px rgba(34, 229, 151, 0.55);
+  animation: pulseDot 1.6s ease-in-out infinite;
+}
+.jobs-status-dot.idle { background: var(--v-300); box-shadow: 0 0 8px rgba(168, 85, 247, 0.4); }
+.jobs-status-dot.pulsing { background: var(--v-300); animation: pulseDot 1.4s ease-in-out infinite; }
+.jobs-status-dot.offline { background: var(--danger); box-shadow: 0 0 8px rgba(255, 77, 109, 0.45); }
+.jobs-status-text { font-size: 13px; color: var(--text-muted); letter-spacing: -0.005em; }
+.jobs-status-text strong { color: var(--text); font-weight: 700; font-family: var(--font-mono); letter-spacing: -0.02em; }
+.jobs-status-new-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, rgba(34, 229, 151, 0.16) 0%, rgba(34, 229, 151, 0.04) 100%);
+  border: 1px solid rgba(34, 229, 151, 0.32);
+  color: #4be5b3;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.jobs-status-new-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #22e597;
+  box-shadow: 0 0 6px #22e597;
+}
+.jobs-status-toggle {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--v-300);
+}
+.jobs-status-bar.open .jobs-status-toggle { color: var(--electric); }
+
+.jobs-status-detail {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.jobs-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.jobs-status-source {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.jobs-status-source-name { font-size: 10.5px; color: var(--v-300); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 800; margin-bottom: 4px; }
+.jobs-status-source-count { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
+
+.jobs-status-next { font-size: 12px; color: var(--text-muted); }
+.jobs-status-next strong { color: var(--text); }
+
+.jobs-status-runs { display: flex; flex-direction: column; gap: 6px; }
+.jobs-status-runs-label { font-size: 10.5px; color: var(--v-300); text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800; }
+.jobs-status-run { display: flex; gap: 12px; font-size: 12px; color: var(--text-muted); padding: 4px 0; border-bottom: 1px dashed var(--border-soft); }
+.jobs-status-run:last-child { border-bottom: none; }
+.jobs-status-run-time { font-family: var(--font-mono); color: var(--v-200); min-width: 90px; flex-shrink: 0; }
+.jobs-status-run-meta strong { color: var(--text); font-family: var(--font-mono); letter-spacing: -0.02em; }
+.jobs-status-run-errors { color: var(--danger); }
+
+/* ── NEW badge (fresh jobs < 1 hour) ─────────────────────────────────────── */
+.fresh-badge {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #22e597 0%, #16a34a 100%);
+  color: #03000a;
+  box-shadow: 0 0 14px rgba(34, 229, 151, 0.45);
+  text-transform: uppercase;
+}
+
+/* ── Result-bar additions ────────────────────────────────────────────────── */
+.jobs-result-filtered-out {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.relevance-badge { /* role-fit variant inherits .match-badge styles; just spacing */ }
+
 /* ── Major picker variant ────────────────────────────────────────────────── */
 .major-picker-wrap .sector-picker-trigger { min-width: 220px; }
 .major-popover { width: 820px; max-height: 540px; }
