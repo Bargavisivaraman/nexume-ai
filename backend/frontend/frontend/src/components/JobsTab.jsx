@@ -7,6 +7,15 @@ import {
   SECTOR_BY_ID,
   TRENDING_SECTORS,
 } from "../data/sectors";
+import {
+  MAJORS,
+  MAJORS_BY_CATEGORY,
+  MAJOR_CATEGORIES,
+  MAJOR_BY_ID,
+  TOP_MAJORS,
+  TOTAL_ROLE_COUNT,
+} from "../data/majors";
+import { POPULAR_LOCATIONS } from "../data/locations";
 
 const API = "https://landtherole-ai.onrender.com";
 
@@ -222,6 +231,163 @@ function SectorPicker({ value, onChange }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Major Picker — opens categorized popover with 50+ majors and 2000+ role tags
+// ─────────────────────────────────────────────────────────────────────────────
+function MajorPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const popRef = useRef(null);
+  const selected = value ? MAJOR_BY_ID[value] : null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (popRef.current && !popRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const filtered = query
+    ? MAJORS.filter(m =>
+        m.label.toLowerCase().includes(query.toLowerCase()) ||
+        m.roles.some(r => r.label.toLowerCase().includes(query.toLowerCase()))
+      )
+    : null;
+
+  return (
+    <div className="sector-picker-wrap major-picker-wrap" ref={popRef}>
+      <button
+        className={`sector-picker-trigger ${open ? "open" : ""} ${selected ? "has-value" : ""}`}
+        onClick={() => setOpen(v => !v)}
+      >
+        {selected ? (
+          <>
+            <span className="sector-picker-emoji">{selected.emoji}</span>
+            <span className="sector-picker-label">{selected.label}</span>
+            <span className="sector-picker-clear" onClick={(e) => { e.stopPropagation(); onChange(null); }}>×</span>
+          </>
+        ) : (
+          <>
+            <span className="sector-picker-emoji">🎓</span>
+            <span className="sector-picker-label">Pick your major</span>
+            <span className="sector-picker-count">{MAJORS.length}+ · {TOTAL_ROLE_COUNT} roles</span>
+            <span className="sector-picker-chev">▾</span>
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div className="sector-popover major-popover">
+          <input
+            className="sector-popover-search"
+            placeholder={`Search ${MAJORS.length}+ majors or ${TOTAL_ROLE_COUNT}+ roles…`}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="sector-popover-body">
+            {filtered ? (
+              <div className="sector-popover-group">
+                <div className="sector-popover-group-label">{filtered.length} match{filtered.length !== 1 ? "es" : ""}</div>
+                <div className="sector-popover-grid major-popover-grid">
+                  {filtered.map(m => (
+                    <button
+                      key={m.id}
+                      className={`sector-option major-option ${value === m.id ? "active" : ""} ${m.isTop ? "is-top" : ""}`}
+                      onClick={() => { onChange(m.id); setOpen(false); setQuery(""); }}
+                    >
+                      <span className="sector-emoji">{m.emoji}</span>
+                      <span className="sector-name">
+                        {m.label}
+                        <span className="major-option-roles">{m.roles.length} roles</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              MAJOR_CATEGORIES.map(cat => (
+                <div key={cat.id} className="sector-popover-group">
+                  <div className="sector-popover-group-label">{cat.emoji} {cat.label}</div>
+                  <div className="sector-popover-grid major-popover-grid">
+                    {MAJORS_BY_CATEGORY[cat.id]?.map(m => (
+                      <button
+                        key={m.id}
+                        className={`sector-option major-option ${value === m.id ? "active" : ""} ${m.isTop ? "is-top" : ""}`}
+                        onClick={() => { onChange(m.id); setOpen(false); }}
+                      >
+                        <span className="sector-emoji">{m.emoji}</span>
+                        <span className="sector-name">
+                          {m.label}
+                          <span className="major-option-roles">{m.roles.length} roles</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Roles Strip — horizontal scrollable chips for roles of the selected major
+// ─────────────────────────────────────────────────────────────────────────────
+function RolesStrip({ majorId, activeRoleId, onPickRole }) {
+  if (!majorId) return null;
+  const major = MAJOR_BY_ID[majorId];
+  if (!major) return null;
+  return (
+    <div className="jobs-roles-strip">
+      <div className="jobs-roles-strip-header">
+        <span className="jobs-roles-strip-label">
+          <span className="jobs-roles-strip-emoji">{major.emoji}</span>
+          <strong>{major.label}</strong>
+          <span className="jobs-roles-strip-count">{major.roles.length} role{major.roles.length !== 1 ? "s" : ""}</span>
+        </span>
+      </div>
+      <div className="jobs-roles-strip-pills">
+        {major.roles.map(role => (
+          <button
+            key={role.id}
+            className={`jobs-role-pill ${activeRoleId === role.id ? "active" : ""}`}
+            onClick={() => onPickRole(activeRoleId === role.id ? null : role.id)}
+          >
+            {role.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Popular Locations — chip group for quick location-filter
+// ─────────────────────────────────────────────────────────────────────────────
+function PopularLocations({ activeValue, onPick }) {
+  return (
+    <div className="jobs-filter-section">
+      <span className="jobs-filter-label">Popular USA locations</span>
+      <div className="jobs-popular-locations">
+        {POPULAR_LOCATIONS.map(loc => (
+          <button
+            key={loc.id}
+            className={`jobs-location-pill ${activeValue === loc.value ? "active" : ""} ${loc.remote ? "is-remote" : ""}`}
+            onClick={() => onPick(loc)}
+          >
+            <span className="jobs-location-pill-emoji">{loc.emoji}</span>
+            <span>{loc.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Salary Range Slider — dual handle
 // ─────────────────────────────────────────────────────────────────────────────
 function SalaryRange({ value, onChange }) {
@@ -289,6 +455,8 @@ export default function JobsTab({ onPrepInterview }) {
   const [query, setQuery]                 = useState("");
   const [locationQuery, setLocationQuery] = useState("Los Angeles, CA");
   const [activeSector, setActiveSector]   = useState(null);   // sector id
+  const [activeMajor, setActiveMajor]     = useState(null);   // major id
+  const [activeRole, setActiveRole]       = useState(null);   // role id within selected major
   const [jobs, setJobs]                   = useState([]);
   const [loading, setLoading]             = useState(false);
   const [error, setError]                 = useState(null);
@@ -338,7 +506,7 @@ export default function JobsTab({ onPrepInterview }) {
 
   const sectorIndustry = activeSector ? SECTOR_BY_ID[activeSector]?.dbIndustry : "";
 
-  const fetchJobs = useCallback(async (c, kw, pg, f = filters, sectorId = activeSector) => {
+  const fetchJobs = useCallback(async (c, kw, pg, f = filters, sectorId = activeSector, majorId = activeMajor, roleId = activeRole) => {
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -347,9 +515,19 @@ export default function JobsTab({ onPrepInterview }) {
     setError(null);
     setRetryMsg(null);
     try {
+      // Resolve major + role context — role keyword > sector seed > major default > raw typed query
+      const majorData  = majorId ? MAJOR_BY_ID[majorId] : null;
+      const roleData   = roleId && majorData ? majorData.roles.find(r => r.id === roleId) : null;
       const sectorData = sectorId ? SECTOR_BY_ID[sectorId] : null;
-      const expandedKeyword = kw.trim() || (sectorData ? sectorData.keywords[0] : "");
-      const industry        = sectorData ? sectorData.dbIndustry : "";
+
+      // Keyword priority: typed query > picked role > sector keyword > nothing
+      const expandedKeyword = kw.trim()
+        || (roleData ? roleData.label : "")
+        || (sectorData ? sectorData.keywords[0] : "");
+
+      // Industry priority: major > sector
+      const industry = (majorData && majorData.dbIndustry) || (sectorData ? sectorData.dbIndustry : "");
+
       const params = new URLSearchParams({ country: c, page: pg, per_page: 20 });
       if (expandedKeyword)       params.set("keyword", expandedKeyword);
       if (locationQuery.trim())  params.set("location", locationQuery.trim());
@@ -391,7 +569,7 @@ export default function JobsTab({ onPrepInterview }) {
       setRetryMsg(null);
       setLoading(false);
     }
-  }, [filters, locationQuery, activeSector]);
+  }, [filters, locationQuery, activeSector, activeMajor, activeRole]);
 
   useEffect(() => { fetchJobs(country, query, 1); /* eslint-disable-next-line */ }, [country]);
 
@@ -417,19 +595,43 @@ export default function JobsTab({ onPrepInterview }) {
   const pickSector = (sectorId) => {
     setActiveSector(sectorId);
     setExpanded(null);
-    fetchJobs(country, query, 1, filters, sectorId);
+    fetchJobs(country, query, 1, filters, sectorId, activeMajor, activeRole);
+  };
+
+  const pickMajor = (majorId) => {
+    setActiveMajor(majorId);
+    setActiveRole(null);
+    setExpanded(null);
+    fetchJobs(country, query, 1, filters, activeSector, majorId, null);
+  };
+
+  const pickRole = (roleId) => {
+    setActiveRole(roleId);
+    setExpanded(null);
+    fetchJobs(country, query, 1, filters, activeSector, activeMajor, roleId);
+  };
+
+  const pickLocation = (loc) => {
+    const value = loc.value;
+    const newFilters = { ...filters, remote: !!loc.remote };
+    setFilters(newFilters);
+    setLocationQuery(loc.remote ? "" : value);
+    fetchJobs(country, query, 1, newFilters, activeSector, activeMajor, activeRole);
   };
 
   const clearFilters = () => {
     const reset = { jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "", internship: false, newGrad: false };
     setFilters(reset);
     setActiveSector(null);
+    setActiveMajor(null);
+    setActiveRole(null);
     setSalary([0, 400000]);
     setLocationQuery("");
-    fetchJobs(country, query, 1, reset, null);
+    fetchJobs(country, query, 1, reset, null, null, null);
   };
 
-  const hasActiveFilters = activeSector || filters.jobType || filters.expLevel ||
+  const hasActiveFilters = activeSector || activeMajor || activeRole ||
+                           filters.jobType || filters.expLevel ||
                            filters.dateRange !== "all" || filters.remote || filters.stateFilter ||
                            filters.internship || filters.newGrad ||
                            salary[0] > 0 || salary[1] < 400000;
@@ -473,9 +675,12 @@ export default function JobsTab({ onPrepInterview }) {
           onChange={e => setLocationQuery(e.target.value)}
           onKeyDown={e => e.key === "Enter" && search()}
         />
-        <SectorPicker value={activeSector} onChange={pickSector} />
+        <MajorPicker value={activeMajor} onChange={pickMajor} />
         <button className="jobs-search-btn" onClick={search}>Search</button>
       </div>
+
+      {/* Roles strip — appears when a major is selected */}
+      <RolesStrip majorId={activeMajor} activeRoleId={activeRole} onPickRole={pickRole} />
 
       {/* Trending sectors strip */}
       <TrendingStrip onPick={pickSector} active={activeSector} />
@@ -498,6 +703,9 @@ export default function JobsTab({ onPrepInterview }) {
               <span>♥</span> Saved <span className="jobs-view-count">{saved.length}</span>
             </button>
           </div>
+
+          {/* Popular USA locations */}
+          <PopularLocations activeValue={locationQuery} onPick={pickLocation} />
 
           <div className="jobs-sidebar-title">
             <span>Filters</span>
