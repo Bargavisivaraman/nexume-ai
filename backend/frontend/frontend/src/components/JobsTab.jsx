@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import useSavedJobs from "../hooks/useSavedJobs";
 import JobsStatusBar from "./JobsStatusBar";
-import { filterJobsForRole, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
+import { filterJobsForRole, filterJobsForMajor, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
 import { roundedCount, isJobNew } from "../lib/format";
+import { expandSearchQuery } from "../lib/search";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -523,8 +524,12 @@ export default function JobsTab({ onPrepInterview }) {
       const roleData   = roleId && majorData ? majorData.roles.find(r => r.id === roleId) : null;
       const sectorData = sectorId ? SECTOR_BY_ID[sectorId] : null;
 
-      // Keyword priority: typed query > picked role > sector keyword > nothing
-      const expandedKeyword = kw.trim()
+      // Keyword priority: typed query > picked role > sector keyword > nothing.
+      // Run the typed query through search expansion so SWE → "software engineer",
+      // "software enginner" → "software engineer", "front-end" → "frontend", etc.
+      const rawKw = kw.trim();
+      const expandedTyped = rawKw ? expandSearchQuery(rawKw) : "";
+      const expandedKeyword = expandedTyped
         || (roleData ? roleData.label : "")
         || (sectorData ? sectorData.keywords[0] : "");
 
@@ -533,7 +538,13 @@ export default function JobsTab({ onPrepInterview }) {
 
       const params = new URLSearchParams({ country: c, page: pg, per_page: 20 });
       if (expandedKeyword)       params.set("keyword", expandedKeyword);
-      if (locationQuery.trim())  params.set("location", locationQuery.trim());
+      if (locationQuery.trim())  {
+        // Send under BOTH params — `location` is used by the live-API fallback path,
+        // `state_filter` is used by the cached-jobs Supabase query. Backend OR-matches
+        // state_filter across city/state/location columns.
+        params.set("location", locationQuery.trim());
+        params.set("state_filter", locationQuery.trim());
+      }
       if (industry)              params.set("industry", industry);
       if (f.jobType)             params.set("job_type", f.jobType);
       if (f.internship)          params.set("job_type", "Internship");
@@ -667,13 +678,33 @@ export default function JobsTab({ onPrepInterview }) {
     return hi >= salary[0] && lo <= salary[1];
   });
 
-  // Step 2: STRICT role-matcher filter (only when a role is picked)
-  // Hard-rejects unrelated titles, scores remaining 0-100, drops < threshold.
-  const visibleJobs = pickedRole
+  // Step 2: STRICT role-matcher filter when a specific role is picked.
+  // Step 2b: When only a major is picked (no specific role), apply major-level
+  //   matcher so Physics doesn't return music-research jobs.
+  const roleFiltered = pickedRole
     ? filterJobsForRole(salaryFiltered, pickedRole, activeMajorData)
-    : salaryFiltered;
+    : activeMajorData
+      ? filterJobsForMajor(salaryFiltered, activeMajorData)
+      : salaryFiltered;
 
-  const filteredOutCount = pickedRole ? salaryFiltered.length - visibleJobs.length : 0;
+  // Step 3: client-side date filter using posted_at. Backend also filters, but
+  // this guarantees correctness — "Past 24h" only shows jobs the source posted
+  // within the last 24h, never jobs we just freshly ingested.
+  const visibleJobs = (() => {
+    if (filters.dateRange === "all") return roleFiltered;
+    const maxHours = { "24h": 24, "7d": 168, "30d": 720 }[filters.dateRange];
+    if (!maxHours) return roleFiltered;
+    const cutoff = Date.now() - maxHours * 3600_000;
+    return roleFiltered.filter((j) => {
+      if (!j.posted_at) return false; // unknown posting date → excluded
+      const t = new Date(j.posted_at).getTime();
+      return !isNaN(t) && t >= cutoff;
+    });
+  })();
+
+  const filteredOutCount = (pickedRole || activeMajorData)
+    ? salaryFiltered.length - visibleJobs.length
+    : 0;
 
   // NEW badge: use posted_at < 24h (the actual job posting age, not when we fetched it).
   // Returns false when the source did not expose a posted timestamp.

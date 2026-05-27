@@ -415,6 +415,178 @@ export function scoreJobForRole(job, role, _major) {
 
 export const RELEVANCE_THRESHOLD = 60;
 
+// ── MAJOR-LEVEL RULES ────────────────────────────────────────────────────────
+// Used when a user picks a major WITHOUT picking a specific role. Without these
+// rules, picking "Physics" returns every Research & Science job in the DB —
+// including unrelated "Research Scientist - Music" titles. These rules anchor
+// the feed to titles/descriptions that actually belong to the major.
+
+const MAJOR_RULES = {
+  // STEM
+  physics: {
+    requiredAny: ["physics", "physicist", "quantum", "optic", "photonic", "laser", "plasma", "astro", "atmospher", "geophys", "semiconductor", "materials science", "imaging scientist", "computational physics", "applied physics", "nuclear engineer", "medical physic"],
+    exclude: ["music", "marketing", "sales", "support specialist", "social media", "fashion", "retail", "hospitality"],
+  },
+  mathematics: {
+    requiredAny: ["math", "quant", "statistic", "actuari", "cryptograph", "algorithm", "operations research"],
+    exclude: ["english teacher", "marketing", "sales", "hospitality"],
+  },
+  chemistry: {
+    requiredAny: ["chemist", "chemical", "biochem", "pharm", "polymer", "analytical", "drug discovery", "lab scientist", "formulation"],
+    exclude: ["music", "marketing", "social media", "hospitality"],
+  },
+  biology: {
+    requiredAny: ["biolog", "molecular", "microbio", "geneticist", "bioinformat", "ecolog", "wildlife", "marine biolog", "conservation biolog"],
+    exclude: ["music", "marketing", "fashion", "hospitality"],
+  },
+  "biomedical-engineering": {
+    requiredAny: ["biomedical", "medical device", "biotech", "tissue", "biomechan", "bioinformat", "clinical engineer", "prosthet", "biomedical software"],
+    exclude: ["music", "fashion", "hospitality"],
+  },
+  "materials-science": {
+    requiredAny: ["material", "polymer", "metallurg", "compos", "ceramic", "semiconductor", "nanotech", "coating", "catalyst", "battery"],
+    exclude: ["music", "marketing", "hospitality"],
+  },
+  "data-science": {
+    requiredAny: ["data scientist", "data analyst", "machine learning", "ml engineer", "ml ops", "analytics", "statistician", "biostat", "applied scientist", "quantitative", "bi engineer"],
+    exclude: ["music", "fashion", "hospitality"],
+  },
+  "information-technology": {
+    requiredAny: ["it ", "support", "sysadmin", "system admin", "network", "help desk", "security analyst", "it manager", "infrastructure", "service desk"],
+    exclude: ["music", "fashion", "hospitality", "marketing"],
+  },
+
+  // HEALTHCARE (these majors usually self-anchor via specific titles)
+  nursing: {
+    requiredAny: ["nurse", "rn", "lpn", "lvn", "cna", "nursing", "nurse practitioner"],
+    exclude: ["engineer", "developer", "designer", "marketing", "sales", "fashion"],
+  },
+  pharmacy: {
+    requiredAny: ["pharmac", "drug ", "medication"],
+    exclude: ["engineer", "developer", "designer", "marketing", "music", "fashion"],
+  },
+  "pre-med": {
+    requiredAny: ["physician", "medical", "clinical", "patient", "hospital", "physician assistant", "scribe", "phlebotom", "doctor"],
+    exclude: ["engineer", "designer", "marketing", "fashion", "developer", "music"],
+  },
+  "health-administration": {
+    requiredAny: ["healthcare", "hospital", "medical", "clinic", "patient", "health services", "revenue cycle", "medical coder", "case manager"],
+    exclude: ["engineer", "developer", "music", "fashion"],
+  },
+  psychology: {
+    requiredAny: ["psycholog", "therap", "counsel", "behavior", "social work", "mental health", "lcsw", "ux research", "behavioral research"],
+    exclude: ["engineer", "developer", "marketing", "music", "fashion", "sales"],
+  },
+  "public-health": {
+    requiredAny: ["public health", "epidemiol", "community health", "global health", "health policy", "biostat", "population health"],
+    exclude: ["engineer", "developer", "marketing", "music", "fashion"],
+  },
+
+  // LAW & PUBLIC
+  "pre-law": {
+    requiredAny: ["attorney", "lawyer", "paralegal", "legal", "law clerk", "counsel", "litigation", "compliance"],
+    exclude: ["engineer", "developer", "designer", "marketing", "music", "fashion"],
+  },
+  "criminal-justice": {
+    requiredAny: ["police", "officer", "detective", "investigator", "corrections", "forensic", "law enforcement", "security officer"],
+    exclude: ["engineer", "developer", "designer", "music", "marketing"],
+  },
+
+  // EDUCATION
+  "elementary-education": {
+    requiredAny: ["elementary teacher", "kindergarten", "first grade", "second grade", "third grade", "fourth grade", "fifth grade", "reading specialist", "paraprofess", "teacher assistant"],
+    exclude: ["engineer", "developer", "designer", "marketing", "music industry", "fashion"],
+  },
+  "secondary-education": {
+    requiredAny: ["high school", "middle school", "math teacher", "english teacher", "science teacher", "history teacher", "school counsel", "ap teacher", "honors teacher"],
+    exclude: ["engineer", "developer", "marketing", "fashion"],
+  },
+  "special-education": {
+    requiredAny: ["special education", "sped", "iep", "bcba", "rbt", "speech language", "slp", "behavior tech", "autism", "occupational therap", "physical therap"],
+    exclude: ["engineer", "developer", "marketing", "music", "fashion"],
+  },
+
+  // ARTS / DESIGN — narrow majors get their family rules from inferFamily()
+  // (graphic-design, ux-ui-design) but standalone majors benefit from a guard:
+  "fine-arts": {
+    requiredAny: ["artist", "illustrator", "painter", "sculpt", "photograph", "ceramic", "printmaker", "curator", "gallery", "art teacher", "art therap"],
+    exclude: ["engineer", "developer", "marketing manager", "data scientist", "data engineer"],
+  },
+  architecture: {
+    requiredAny: ["architect", "architectural", "interior designer", "urban", "landscape architect", "bim", "revit", "autocad architect"],
+    exclude: ["software architect", "solutions architect", "cloud architect", "data architect", "marketing", "music"],
+  },
+  "film-media": {
+    requiredAny: ["video editor", "film", "cinematograph", "producer", "director", "production assistant", "vfx", "compositor", "animator", "colorist", "sound design"],
+    exclude: ["software", "data engineer", "marketing manager", "product manager"],
+  },
+  "music-performing-arts": {
+    requiredAny: ["music", "musician", "audio", "composer", "songwriter", "performer", "actor", "dancer", "tour manager", "music producer"],
+    exclude: ["software", "data engineer", "marketing", "research scientist"],
+  },
+
+  // TRADES
+  "hospitality-tourism": {
+    requiredAny: ["hospitality", "hotel", "guest service", "concierge", "front desk", "reservations", "banquet", "event coordinator", "wedding planner", "travel agent", "tourism"],
+    exclude: ["software", "data engineer", "designer", "marketing"],
+  },
+  "culinary-arts": {
+    requiredAny: ["chef", "cook", "kitchen", "culinary", "pastry", "baker", "sushi", "barista", "bartender", "sommelier"],
+    exclude: ["software", "engineer", "developer", "data"],
+  },
+  "construction-management": {
+    requiredAny: ["construction", "field engineer construct", "estimator", "site superintend", "scheduler", "safety construct", "permit", "building inspect", "concrete", "steel"],
+    exclude: ["software", "data", "marketing"],
+  },
+};
+
+/**
+ * Score a job's relevance to a target MAJOR (no role picked).
+ * Returns 0..100; 0 means filter out.
+ *
+ * Behavior:
+ *   - Hard-rejects jobs whose title contains a major-level exclude
+ *   - Requires at least one major-level required keyword in title OR description
+ *   - Falls back to "title must contain at least one of the major's role labels"
+ *     when no explicit rule exists
+ */
+export function scoreJobForMajor(job, major) {
+  if (!job || !major) return 100;
+  const title = (job.title || "").toLowerCase();
+  const desc = (job.description || "").toLowerCase();
+  if (!title) return 0;
+
+  const rule = MAJOR_RULES[major.id];
+
+  if (rule) {
+    // Hard reject on excludes
+    for (const ex of rule.exclude || []) {
+      if (title.includes(ex)) return 0;
+    }
+    // Require at least one anchor keyword
+    const inTitle = (rule.requiredAny || []).some((kw) => title.includes(kw));
+    const inDesc  = (rule.requiredAny || []).some((kw) => desc.includes(kw));
+    if (!inTitle && !inDesc) return 0;
+    return inTitle ? 85 : 65;
+  }
+
+  // No explicit rule — use the union of role label/keywords as include set
+  const allKw = (major.roles || []).flatMap((r) =>
+    [r.label.toLowerCase(), ...(r.keywords || []).map((k) => k.toLowerCase())]
+  );
+  if (allKw.some((kw) => title.includes(kw))) return 80;
+  if (allKw.some((kw) => desc.includes(kw))) return 62;
+  return 0;
+}
+
+export function filterJobsForMajor(jobs, major) {
+  if (!major || !Array.isArray(jobs)) return jobs;
+  return jobs
+    .map((j) => ({ ...j, _majorRelevance: scoreJobForMajor(j, major) }))
+    .filter((j) => (j._majorRelevance || 0) >= RELEVANCE_THRESHOLD)
+    .sort((a, b) => (b._majorRelevance || 0) - (a._majorRelevance || 0));
+}
+
 /**
  * Filter + sort jobs for a target role, attaching _relevance to each result.
  * Pass role = null to disable filtering (returns jobs unchanged).
