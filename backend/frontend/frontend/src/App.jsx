@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, memo } from "react";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
 import JobsTab from "./components/JobsTab";
+import InterviewSimulator from "./components/InterviewSimulator";
 
 // ── ATS BREAKDOWN ─────────────────────────────────────────────────────────────
 function ATSBreakdown({ breakdown }) {
@@ -486,6 +487,7 @@ function BulletRewriter({ bullets, jobContext }) {
 
 // ── INTERVIEW TAB ─────────────────────────────────────────────────────────────
 function InterviewPage({ prefillTitle, prefillCompany }) {
+  const [interviewMode, setInterviewMode] = useState("bank"); // bank | live
   const [jd, setJd] = useState("");
   const [resumeText, setResumeText] = useState("");
   const [numQ, setNumQ] = useState(10);
@@ -583,7 +585,20 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
         <p>Get tailored questions from any job description. Practice your answers and get AI feedback.</p>
       </div>
       <div className="interview-inner">
-      {questions === null ? (
+      <div className="interview-mode-switch">
+        <button
+          className={`interview-mode-btn ${interviewMode === "bank" ? "active" : ""}`}
+          onClick={() => setInterviewMode("bank")}
+        >📝 Question Bank</button>
+        <button
+          className={`interview-mode-btn ${interviewMode === "live" ? "active" : ""}`}
+          onClick={() => setInterviewMode("live")}
+        >🎙️ Live Mock Interview <span className="interview-mode-new">NEW</span></button>
+      </div>
+
+      {interviewMode === "live" ? (
+        <InterviewSimulator prefillTitle={prefillTitle} prefillCompany={prefillCompany} />
+      ) : questions === null ? (
         <div className="interview-setup">
           {prefillTitle && (
             <div className="prefill-banner">

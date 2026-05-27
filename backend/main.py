@@ -1212,6 +1212,211 @@ Return this exact JSON:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — INTERVIEW SIMULATOR (real-time voice mock)
+# ─────────────────────────────────────────────────────────────────────────────
+
+INTERVIEW_MODES = {
+    "hr": (
+        "You are a friendly HR recruiter conducting a 20-minute screening interview. "
+        "Be warm, professional, and conversational. Ask ONE question at a time. "
+        "Keep every response under 35 words — like a real spoken conversation, not an essay. "
+        "Listen for what the candidate actually said and ask natural follow-ups about motivation, "
+        "culture fit, career goals, and behavioral signals. Acknowledge briefly before asking the next question."
+    ),
+    "behavioral": (
+        "You are a senior hiring manager conducting a behavioral interview. "
+        "Use STAR-format questions and probe for specific examples with measurable impact. "
+        "Keep your responses under 35 words. If the candidate gives a vague answer, ask one clarifying "
+        "follow-up about Situation, Task, Action, or Result. Be warm but rigorous. Never give multi-part questions."
+    ),
+    "technical": (
+        "You are a senior engineer running a 30-minute technical interview. "
+        "Ask role-relevant technical questions one at a time and probe deeper on every answer — "
+        "ask about trade-offs, scaling, edge cases. Politely challenge weak claims. "
+        "Keep responses under 40 words. Be direct, no fluff."
+    ),
+    "case_study": (
+        "You are a senior management consultant running a case interview. "
+        "Present one business problem clearly, then guide the conversation by asking for assumptions, "
+        "frameworks, and quantitative reasoning. Probe gaps in logic. Keep responses under 40 words. "
+        "Ask one question at a time."
+    ),
+    "stress": (
+        "You are conducting a stress interview. Be polite but consistently challenging. "
+        "Push back on every answer. Ask 'why?' multiple times. Never give positive feedback or "
+        "encouragement. Make the candidate justify their reasoning. Keep responses under 30 words."
+    ),
+}
+
+
+class InterviewTurnRequest(BaseModel):
+    mode:     str  = "hr"
+    history:  List[dict] = []   # [{"role": "ai"|"user", "content": "..."}]
+    jd:       Optional[str] = ""
+    resume:   Optional[str] = ""
+    is_start: bool = False
+    target_role:    Optional[str] = ""
+    target_company: Optional[str] = ""
+
+
+@app.post("/interview-turn/")
+async def interview_turn(req: InterviewTurnRequest):
+    """
+    Returns the next interviewer line given the rolling conversation history.
+    Stateless — frontend sends full history each turn. Keeps backend simple
+    and avoids the auth-store-conversation problem.
+    """
+    system = INTERVIEW_MODES.get(req.mode, INTERVIEW_MODES["hr"])
+
+    if req.target_role:
+        system += f"\n\nThe candidate is interviewing for the role: {req.target_role}."
+    if req.target_company:
+        system += f" Company: {req.target_company}."
+    if req.jd and req.jd.strip():
+        system += f"\n\nJOB DESCRIPTION (use this to inform your questions):\n{req.jd[:2000]}"
+    if req.resume and req.resume.strip():
+        system += f"\n\nCANDIDATE RESUME (use to ask personalised follow-ups):\n{req.resume[:2000]}"
+
+    turn_count = sum(1 for h in req.history if h.get("role") == "user")
+    if req.is_start:
+        system += (
+            "\n\nThe interview is starting NOW. Greet the candidate warmly by referring to the role, "
+            "then ask your first question. Keep the greeting + first question under 40 words combined. "
+            "Sound natural and conversational, like a recruiter on a call."
+        )
+    elif turn_count >= 6:
+        system += (
+            "\n\nThe interview is approaching its end. After the candidate's next answer, transition to "
+            "closing: thank them, briefly summarize one thing you liked, and ask if they have any questions. "
+            "If they already asked questions or said no, end with 'Thanks again — best of luck!'"
+        )
+    else:
+        system += (
+            "\n\nContinue the interview naturally. If the candidate's last answer was weak, vague, or "
+            "missing detail, ask a follow-up. Otherwise move to a new relevant question. ONE question only."
+        )
+
+    messages = [{"role": "system", "content": system}]
+    for h in req.history[-12:]:  # cap context to last 12 turns
+        role = "assistant" if h.get("role") == "ai" else "user"
+        content = (h.get("content") or "").strip()
+        if content:
+            messages.append({"role": role, "content": content})
+
+    try:
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=180,
+            temperature=0.8,
+            presence_penalty=0.5,
+            frequency_penalty=0.4,
+        ))
+        text = response.choices[0].message.content.strip()
+        should_end = turn_count >= 7 or any(
+            phrase in text.lower() for phrase in ("best of luck", "wishing you the best", "have a great")
+        )
+        return {"message": text, "should_end": should_end, "turn_count": turn_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Interview turn failed: {str(e)}")
+
+
+class TTSRequest(BaseModel):
+    text:  str
+    voice: str = "nova"   # alloy | echo | fable | onyx | nova | shimmer
+    speed: float = 1.0
+
+
+@app.post("/interview-tts/")
+async def interview_tts(req: TTSRequest):
+    """
+    Server-side proxy for OpenAI TTS so the API key never reaches the browser.
+    Returns audio/mpeg the frontend can <audio>-play immediately.
+    """
+    from fastapi.responses import StreamingResponse
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if len(text) > 4000:
+        text = text[:4000]
+    voice = req.voice if req.voice in {"alloy", "echo", "fable", "onyx", "nova", "shimmer"} else "nova"
+    speed = max(0.5, min(2.0, req.speed or 1.0))
+
+    try:
+        # tts-1 is cheaper & lower latency than tts-1-hd; ~$15/1M chars (~$0.01 / 700-char interview line)
+        audio = await asyncio.to_thread(lambda: openai_client.audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text,
+            speed=speed,
+            response_format="mp3",
+        ))
+        return StreamingResponse(
+            io.BytesIO(audio.content),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
+
+
+class InterviewSummaryRequest(BaseModel):
+    mode:           str = "hr"
+    history:        List[dict] = []
+    target_role:    Optional[str] = ""
+    target_company: Optional[str] = ""
+
+
+@app.post("/interview-summary/")
+async def interview_summary(req: InterviewSummaryRequest):
+    """Post-interview scorecard. Returns scores, strengths, weaknesses, suggested model answers."""
+    if not req.history:
+        raise HTTPException(status_code=400, detail="No conversation to summarise")
+
+    convo_text = "\n".join(
+        f"{'INTERVIEWER' if h.get('role') == 'ai' else 'CANDIDATE'}: {h.get('content','')}"
+        for h in req.history if h.get("content")
+    )
+
+    system = (
+        f"You are an expert interview coach evaluating a {req.mode} mock interview"
+        f"{' for ' + req.target_role if req.target_role else ''}"
+        f"{' at ' + req.target_company if req.target_company else ''}. "
+        "Score the candidate's PERFORMANCE only — not the interviewer. Be honest and specific.\n\n"
+        "Return strict JSON with this exact shape:\n"
+        "{\n"
+        '  "overall_score": int (0-100),\n'
+        '  "communication_score": int,\n'
+        '  "technical_depth_score": int,\n'
+        '  "confidence_score": int,\n'
+        '  "structure_score": int (STAR / framework adherence),\n'
+        '  "strengths": [string, string, string],\n'
+        '  "weaknesses": [string, string, string],\n'
+        '  "key_moments": [{"question": string, "what_you_said": string, "what_to_say_instead": string}],\n'
+        '  "improvement_plan": [string, string, string]\n'
+        "}\n"
+        "key_moments should contain 1-3 entries focused on the weakest answers."
+    )
+
+    try:
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"INTERVIEW TRANSCRIPT:\n\n{convo_text[:8000]}"},
+            ],
+            temperature=0.4,
+        ))
+        data = json.loads(response.choices[0].message.content)
+        return data
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Summary model returned invalid JSON")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summary failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — RESUME ANALYSIS
 # ─────────────────────────────────────────────────────────────────────────────
 
