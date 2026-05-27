@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import "./App.css";
+import BackgroundFX from "./components/BackgroundFX";
+import JobsTab from "./components/JobsTab";
 
 // ── ATS BREAKDOWN ─────────────────────────────────────────────────────────────
 function ATSBreakdown({ breakdown }) {
@@ -41,19 +43,8 @@ fetch(`${API}/warmup`).catch(() => {});
 const Footer = memo(function Footer() {
   return (
     <footer className="footer">
-      <p><span>Nexume.ai</span> · Built by Bargavi Sivaraman · © 2026</p>
+      <p><span>Nexume</span> · Crafted by Bargavi Sivaraman · © 2026</p>
     </footer>
-  );
-});
-
-// ── FLOATING ORBS ─────────────────────────────────────────────────────────────
-const FloatingOrbs = memo(function FloatingOrbs() {
-  return (
-    <div className="orbs-wrap" aria-hidden="true">
-      <div className="orb orb-1" />
-      <div className="orb orb-2" />
-      <div className="orb orb-3" />
-    </div>
   );
 });
 
@@ -443,491 +434,6 @@ function BulletRewriter({ bullets, jobContext }) {
   );
 }
 
-// ── JOBS TAB ──────────────────────────────────────────────────────────────────
-const INDUSTRIES = [
-  "Technology","Healthcare","Education","Finance","Legal",
-  "Marketing","Sales","Design & Creative","Human Resources",
-  "Supply Chain","Engineering","Government","Research & Science",
-  "Retail & Hospitality","Business",
-];
-const INDUSTRY_COLORS = {
-  "Technology":          "#0a84ff",
-  "Healthcare":          "#30d158",
-  "Education":           "#ff9f0a",
-  "Finance":             "#5ac8fa",
-  "Legal":               "#ffd60a",
-  "Marketing":           "#ff2d55",
-  "Sales":               "#ff6b6b",
-  "Design & Creative":   "#bf5af2",
-  "Human Resources":     "#5e5ce6",
-  "Supply Chain":        "#ffcc00",
-  "Engineering":         "#8e8e93",
-  "Government":          "#64d2ff",
-  "Research & Science":  "#32ade6",
-  "Retail & Hospitality":"#ff375f",
-  "Business":            "#aeaeb2",
-  "Other":               "#636366",
-};
-const EXP_COLORS = {
-  "Entry Level": "#30d158",
-  "Mid Level":   "#0a84ff",
-  "Senior":      "#ff9f0a",
-  "Executive":   "#ffd60a",
-};
-
-function getSource(url) {
-  try {
-    const host = new URL(url).hostname.replace("www.", "");
-    const known = {
-      "linkedin.com":"LinkedIn","indeed.com":"Indeed","glassdoor.com":"Glassdoor",
-      "ziprecruiter.com":"ZipRecruiter","monster.com":"Monster","dice.com":"Dice",
-      "greenhouse.io":"Greenhouse","lever.co":"Lever","workday.com":"Workday",
-      "myworkdayjobs.com":"Workday","icims.com":"iCIMS","smartrecruiters.com":"SmartRecruiters",
-      "careers.google.com":"Google","jobs.apple.com":"Apple","amazon.jobs":"Amazon","microsoft.com":"Microsoft",
-    };
-    return known[host] || host;
-  } catch { return "Job Board"; }
-}
-
-function formatEmploymentType(t) {
-  if (!t) return null;
-  return { FULLTIME:"Full-time", PARTTIME:"Part-time", CONTRACTOR:"Contract", INTERN:"Internship" }[t.toUpperCase()] || t;
-}
-
-const CACHE_KEY = "ltr_jobs_cache";
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-function SkeletonJobCard() {
-  return (
-    <div className="li-job-card skeleton-card" style={{ pointerEvents: "none" }}>
-      <div className="li-card-top">
-        <div className="skeleton-line" style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="skeleton-line" style={{ width: "55%", height: "17px", marginBottom: "8px" }} />
-          <div className="skeleton-line" style={{ width: "38%", height: "13px", marginBottom: "6px" }} />
-          <div className="skeleton-line" style={{ width: "28%", height: "12px" }} />
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <div className="skeleton-line" style={{ width: 60, height: 18, borderRadius: 4 }} />
-        <div className="skeleton-line" style={{ width: 50, height: 18, borderRadius: 4 }} />
-        <div className="skeleton-line" style={{ width: 55, height: 18, borderRadius: 4 }} />
-      </div>
-    </div>
-  );
-}
-
-// ── COMPANY AVATAR ─────────────────────────────────────────────────────────────
-function CompanyAvatar({ name, size = 44 }) {
-  const initials = name
-    ? name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase()
-    : "?";
-  const hue = name ? [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % 360 : 200;
-  return (
-    <div
-      className="company-avatar"
-      style={{
-        width: size, height: size,
-        background: `hsl(${hue},45%,28%)`,
-        border: `1px solid hsl(${hue},45%,38%)`,
-      }}
-    >
-      <span style={{ color: `hsl(${hue},70%,72%)`, fontSize: size * 0.38, fontWeight: 800 }}>
-        {initials}
-      </span>
-    </div>
-  );
-}
-
-function JobsTab({ onPrepInterview }) {
-  const [country, setCountry]       = useState("US");
-  const [query, setQuery]           = useState("");
-  const [locationQuery, setLocationQuery] = useState("Los Angeles, CA");
-  const [jobs, setJobs]             = useState([]);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState(null);
-  const [retryMsg, setRetryMsg]     = useState(null);
-  const [page, setPage]             = useState(1);
-  const [hasMore, setHasMore]       = useState(false);
-  const [expanded, setExpanded]     = useState(null);
-  const [filters, setFilters] = useState({
-    industry: "", jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "",
-  });
-  const abortRef = useRef(null);
-
-  // Load from cache on mount
-  useEffect(() => {
-    try {
-      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || "null");
-      if (cached && Date.now() - cached.ts < CACHE_TTL && cached.country === "US") {
-        setJobs(cached.jobs);
-        setHasMore(cached.hasMore);
-        setPage(cached.page);
-      }
-    } catch {}
-  }, []);
-
-  const setFilter = (key, val) => setFilters(f => ({ ...f, [key]: val }));
-
-  const fetchWithRetry = async (url, signal, retries = 3) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const res = await fetch(url, { signal });
-        if (res.ok) return res;
-        if (res.status < 500 || attempt === retries) return res;
-        setRetryMsg(`Server warming up… (attempt ${attempt + 1}/${retries})`);
-        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-      } catch (e) {
-        if (e.name === "AbortError") throw e;
-        if (attempt === retries) throw e;
-        setRetryMsg(`Retrying… (attempt ${attempt + 1}/${retries})`);
-        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-      }
-    }
-  };
-
-  const fetchJobs = useCallback(async (c, kw, pg, f = filters) => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    if (pg === 1) setJobs([]);
-    setLoading(true);
-    setError(null);
-    setRetryMsg(null);
-    try {
-      const params = new URLSearchParams({ country: c, page: pg, per_page: 20 });
-      if (kw.trim())             params.set("keyword", kw.trim());
-      if (locationQuery.trim())  params.set("location", locationQuery.trim());
-      if (f.industry)            params.set("industry", f.industry);
-      if (f.jobType)             params.set("job_type", f.jobType);
-      if (f.expLevel)            params.set("experience_level", f.expLevel);
-      if (f.dateRange !== "all") params.set("date_range", f.dateRange);
-      if (f.remote)              params.set("remote", "true");
-      if (f.stateFilter.trim())  params.set("state_filter", f.stateFilter.trim());
-      const res = await fetchWithRetry(`${API}/jobs/?${params}`, controller.signal);
-      if (!res || controller.signal.aborted) return;
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `Server error ${res.status}`);
-      }
-      const data = await res.json();
-      const newJobs = pg === 1 ? (data.jobs || []) : null;
-      if (pg === 1) {
-        setJobs(data.jobs || []);
-        try {
-          sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-            jobs: data.jobs || [], hasMore: data.has_more === true,
-            page: pg, ts: Date.now(), country: c,
-          }));
-        } catch {}
-      } else {
-        setJobs(prev => [...prev, ...(data.jobs || [])]);
-      }
-      setHasMore(data.has_more === true);
-      setPage(pg);
-    } catch (e) {
-      if (e.name === "AbortError") return;
-      const isColdStart = e.message.toLowerCase().includes("fetch") ||
-                          e.message.toLowerCase().includes("network") ||
-                          e.message.toLowerCase().includes("failed");
-      setError(isColdStart ? "cold_start" : e.message);
-    } finally {
-      setRetryMsg(null);
-      setLoading(false);
-    }
-  }, [filters]);
-
-  // Initial load + country switch
-  useEffect(() => { fetchJobs(country, "", 1); }, [country]);
-
-  // Debounced search — fires 400 ms after query stops changing
-  useEffect(() => {
-    if (!query) return;
-    const t = setTimeout(() => fetchJobs(country, query, 1), 400);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  const search = () => {
-    const next = { ...filters, stateFilter: locationQuery };
-    setFilters(next);
-    fetchJobs(country, query, 1, next);
-  };
-
-  const applyFilter = (key, val) => {
-    const next = { ...filters, [key]: val };
-    setFilters(next);
-    fetchJobs(country, query, 1, next);
-  };
-
-  const clearFilters = () => {
-    const reset = { industry: "", jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "" };
-    setFilters(reset);
-    setLocationQuery("");
-    fetchJobs(country, query, 1, reset);
-  };
-
-  const hasActiveFilters = filters.industry || filters.jobType || filters.expLevel ||
-                           filters.dateRange !== "all" || filters.remote || filters.stateFilter;
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return null;
-    const diff = Math.floor((Date.now() - new Date(dateStr)) / 3600000);
-    if (diff < 1)  return "Just now";
-    if (diff < 24) return `${diff}h ago`;
-    const d = Math.floor(diff / 24);
-    if (d < 7)     return `${d}d ago`;
-    return `${Math.floor(d / 7)}w ago`;
-  };
-
-  return (
-    <div className="jobs-page">
-      {/* ── Sticky search bar ── */}
-      <div className="jobs-search-bar">
-        <input
-          className="jobs-search-input"
-          placeholder="Job title, skill, or keyword…"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && search()}
-        />
-        <input
-          className="jobs-location-input"
-          placeholder="Location (e.g. CA, Texas)"
-          value={locationQuery}
-          onChange={e => setLocationQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && search()}
-        />
-        <button className="jobs-search-btn" onClick={search}>Search</button>
-        <div className="jobs-country-pills">
-          {[["US","🇺🇸 US"]].map(([code, label]) => (
-            <button
-              key={code}
-              className={`jobs-country-pill${country === code ? " active" : ""}`}
-              onClick={() => { setCountry(code); setQuery(""); setLocationQuery(""); }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Two-column body ── */}
-      <div className="jobs-body">
-
-        {/* Left sidebar */}
-        <aside className="jobs-sidebar">
-          <div className="jobs-sidebar-title">
-            <span>Filters</span>
-            {hasActiveFilters && (
-              <button className="jobs-sidebar-clear" onClick={clearFilters}>Clear all</button>
-            )}
-          </div>
-
-          {/* Job Type */}
-          <div className="jobs-filter-section">
-            <span className="jobs-filter-label">Job Type</span>
-            <div className="jobs-filter-chips">
-              {[["Full-time","Full-time"],["Part-time","Part-time"],["Contract","Contract"],["Internship","Internship"]].map(([val, label]) => (
-                <button
-                  key={val}
-                  className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
-                  onClick={() => applyFilter("jobType", filters.jobType === val ? "" : val)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Experience */}
-          <div className="jobs-filter-section">
-            <span className="jobs-filter-label">Experience</span>
-            <div className="jobs-filter-chips">
-              {[["Entry Level","Entry"],["Mid Level","Mid"],["Senior","Senior"],["Executive","Executive"]].map(([val, label]) => (
-                <button
-                  key={val}
-                  className={`jobs-filter-chip${filters.expLevel === val ? " active" : ""}`}
-                  onClick={() => applyFilter("expLevel", filters.expLevel === val ? "" : val)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Date Posted */}
-          <div className="jobs-filter-section">
-            <span className="jobs-filter-label">Date Posted</span>
-            <div className="jobs-filter-chips">
-              {[["all","Any"],["24h","Past 24h"],["7d","Past week"],["30d","Past month"]].map(([val, label]) => (
-                <button
-                  key={val}
-                  className={`jobs-filter-chip${filters.dateRange === val ? " active" : ""}`}
-                  onClick={() => applyFilter("dateRange", val)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Remote Only toggle */}
-          <div className="jobs-filter-section">
-            <span className="jobs-filter-label">Work Mode</span>
-            <div className="jobs-remote-row">
-              <span className="jobs-remote-label">Remote Only</span>
-              <label className="jobs-toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={filters.remote}
-                  onChange={() => applyFilter("remote", !filters.remote)}
-                />
-                <span className="jobs-toggle-track" />
-                <span className="jobs-toggle-thumb" />
-              </label>
-            </div>
-          </div>
-        </aside>
-
-        {/* Right main */}
-        <main className="jobs-main">
-
-          {/* Mobile horizontal filter row */}
-          <div className="jobs-mobile-filters">
-            {[["Full-time","Full-time"],["Part-time","Part-time"],["Contract","Contract"],["Internship","Internship"]].map(([val, label]) => (
-              <button
-                key={val}
-                className={`jobs-filter-chip${filters.jobType === val ? " active" : ""}`}
-                onClick={() => applyFilter("jobType", filters.jobType === val ? "" : val)}
-              >
-                {label}
-              </button>
-            ))}
-            {[["Entry Level","Entry"],["Mid Level","Mid"],["Senior","Senior"]].map(([val, label]) => (
-              <button
-                key={val}
-                className={`jobs-filter-chip${filters.expLevel === val ? " active" : ""}`}
-                onClick={() => applyFilter("expLevel", filters.expLevel === val ? "" : val)}
-              >
-                {label}
-              </button>
-            ))}
-            <button
-              className={`jobs-filter-chip${filters.remote ? " active" : ""}`}
-              onClick={() => applyFilter("remote", !filters.remote)}
-            >
-              Remote
-            </button>
-          </div>
-
-          {retryMsg && (
-            <p style={{ textAlign: "center", padding: "10px 0", opacity: 0.7, fontSize: 13, color: "var(--text-dim)" }}>
-              ⏳ {retryMsg}
-            </p>
-          )}
-
-          {error === "cold_start" ? (
-            <div className="jobs-empty" style={{ padding: "40px 0" }}>
-              <p style={{ fontSize: "1.1rem", marginBottom: "8px" }}>⏳ Server is waking up…</p>
-              <p style={{ opacity: 0.6, marginBottom: "20px" }}>This can take up to 60 seconds on first load. Please wait or retry.</p>
-              <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
-            </div>
-          ) : error ? (
-            <div className="jobs-empty" style={{ padding: "40px 0" }}>
-              <p style={{ fontSize: "1rem", marginBottom: "16px", color: "#ff453a" }}>⚠ {error}</p>
-              <button className="load-more-btn" onClick={() => fetchJobs(country, query, 1)}>Retry</button>
-            </div>
-          ) : null}
-
-          {!error && (loading && jobs.length === 0 ? (
-            <div>
-              {Array.from({ length: 6 }).map((_, i) => <SkeletonJobCard key={i} />)}
-            </div>
-          ) : jobs.length === 0 && !loading ? (
-            <div className="jobs-empty">No jobs found. Try adjusting your filters or search terms.</div>
-          ) : (
-            <>
-              {jobs.length > 0 && (
-                <p className="jobs-result-count">
-                  {jobs.length} job{jobs.length !== 1 ? "s" : ""} found{hasActiveFilters ? " · filtered" : ""}
-                </p>
-              )}
-              {jobs.map(job => {
-                const indColor = INDUSTRY_COLORS[job.industry] || "#636366";
-                const expColor = EXP_COLORS[job.experience_level] || "#aeaeb2";
-                const empType = formatEmploymentType(job.employment_type);
-                const timeAgo = job.posted_at ? formatDate(job.posted_at) : null;
-                const isExpanded = expanded === job.job_id;
-                return (
-                  <div
-                    key={job.job_id}
-                    className={`li-job-card${isExpanded ? " active" : ""}`}
-                    onClick={() => setExpanded(isExpanded ? null : job.job_id)}
-                  >
-                    <div className="li-card-top">
-                      <CompanyAvatar name={job.company} size={44} />
-                      <div className="li-card-info">
-                        <div className="li-job-title">{job.title || "Untitled"}</div>
-                        <div className="li-job-company">{job.company || "Company not listed"}</div>
-                        {job.location && <div className="li-job-location">{job.location}</div>}
-                      </div>
-                      {timeAgo && <span className="li-time">{timeAgo}</span>}
-                    </div>
-
-                    <div className="li-card-meta">
-                      {job.industry && job.industry !== "Other" && (
-                        <span className="li-badge" style={{ color: indColor, background: `${indColor}14`, borderColor: `${indColor}35` }}>{job.industry}</span>
-                      )}
-                      {empType && (
-                        <span className="li-badge" style={{ color: "var(--text-muted)", background: "var(--surface2)", borderColor: "var(--border)" }}>{empType}</span>
-                      )}
-                      {job.experience_level && (
-                        <span className="li-badge" style={{ color: expColor, background: `${expColor}14`, borderColor: `${expColor}35` }}>{job.experience_level}</span>
-                      )}
-                      {job.is_remote && (
-                        <span className="li-badge" style={{ color: "#30d158", background: "rgba(48,209,88,0.1)", borderColor: "rgba(48,209,88,0.3)" }}>Remote</span>
-                      )}
-                    </div>
-
-                    <div className="li-card-actions" onClick={e => e.stopPropagation()}>
-                      {job.url ? (
-                        <a className="li-apply-btn" href={job.url} target="_blank" rel="noopener noreferrer">Apply Now</a>
-                      ) : job.job_url ? (
-                        <a className="li-apply-btn" href={job.job_url} target="_blank" rel="noopener noreferrer">Apply Now</a>
-                      ) : (
-                        <span className="li-apply-btn apply-na">No Link</span>
-                      )}
-                      <button className="li-prep-btn" onClick={() => onPrepInterview(job.title, job.company)}>
-                        Prep Interview
-                      </button>
-                      {job.source && (
-                        <span className="li-source-badge">{job.source}</span>
-                      )}
-                    </div>
-
-                    {isExpanded && (
-                      <div className="li-description" onClick={e => e.stopPropagation()}>
-                        {job.description || "No description available."}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {hasMore && (
-                <div style={{ textAlign: "center", marginTop: "24px" }}>
-                  <button className="load-more-btn" onClick={e => { e.stopPropagation(); fetchJobs(country, query, page + 1); }} disabled={loading}>
-                    {loading ? <><span className="spinner" /> Loading…</> : "Load More Jobs"}
-                  </button>
-                </div>
-              )}
-            </>
-          ))}
-        </main>
-      </div>
-    </div>
-  );
-}
-
 // ── INTERVIEW TAB ─────────────────────────────────────────────────────────────
 function InterviewPage({ prefillTitle, prefillCompany }) {
   const [jd, setJd] = useState("");
@@ -1301,10 +807,16 @@ function ResumePage() {
 
   if (!result) return (
     <div className="hero">
+      <div className="hero-eyebrow">AI Career Co-Pilot</div>
+      <h1 className="hero-headline">
+        Get hired.{" "}
+        <span className="hero-headline-accent">Faster.</span>
+      </h1>
+      <p className="hero-sub">
+        Drop your resume. Get an instant ATS score, keyword gap analysis, and AI-rewritten bullets — in under ten seconds.
+      </p>
       <div className="card">
-        <div className="logo-tag">Nexume.ai</div>
-        <h1>Get Hired Faster</h1>
-        <p>Upload your resume and get a full ATS score, keyword gap analysis, and bullet rewrites.</p>
+        <p>One PDF in. A complete hiring report out — score, missing keywords, rewrites, and the exact fixes that move the needle.</p>
         <div className="upload-row">
           <label className="file-label">
             <input type="file" accept=".pdf" onChange={handleFileChange} />
@@ -1338,6 +850,24 @@ function ResumePage() {
         )}
         {error && <p className="error-msg">{error}</p>}
       </div>
+
+      <div className="landing-stats">
+        <div className="stat-item">
+          <div className="stat-number">10s</div>
+          <div className="stat-label">Avg analysis</div>
+        </div>
+        <div className="stat-divider" />
+        <div className="stat-item">
+          <div className="stat-number">9</div>
+          <div className="stat-label">AI-powered tools</div>
+        </div>
+        <div className="stat-divider" />
+        <div className="stat-item">
+          <div className="stat-number">0</div>
+          <div className="stat-label">Sign-up required</div>
+        </div>
+      </div>
+
       {history.length > 0 && (
         <div className="history-section">
           <div className="history-title">📂 Recent Analyses</div>
@@ -2104,7 +1634,7 @@ function App() {
 
   return (
     <>
-      <FloatingOrbs />
+      <BackgroundFX />
       <Nav tab={tab} setTab={switchTab} resetApp={resetApp} theme={theme} setTheme={setTheme} />
       <main className="main-content">
         <div className="tab-panel" key={tab} data-dir={transDir}>

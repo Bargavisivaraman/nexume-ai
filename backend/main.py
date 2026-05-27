@@ -943,6 +943,25 @@ async def manual_refresh():
     return {"message": "Ingestion triggered — check /jobs/status/ for progress"}
 
 
+@app.post("/jobs/ingest-ats")
+async def ingest_ats(tier: Optional[str] = Query(None, description="tier1 | tier2 | tier3 (omit for all)")):
+    """
+    Trigger ingestion from public ATS boards (Greenhouse, Lever, Ashby, Workable).
+    Pulls ~150+ companies' open jobs and upserts to Supabase. Runs in background.
+
+    Tier strategy:
+      tier1 (hourly):  major tech + finance — high user demand
+      tier2 (daily):   broader SaaS, healthcare, design
+      tier3 (weekly):  long-tail companies
+    """
+    try:
+        from aggregators import run_ats_ingestion
+        asyncio.create_task(run_ats_ingestion(supabase, tier=tier))
+        return {"message": f"ATS ingestion triggered (tier={tier or 'all'}) — check /jobs/status/"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — INTERVIEW PREP
 # ─────────────────────────────────────────────────────────────────────────────

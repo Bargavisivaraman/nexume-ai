@@ -21,7 +21,12 @@ ALTER TABLE jobs
   ADD COLUMN IF NOT EXISTS salary_period     text,
   ADD COLUMN IF NOT EXISTS source_name       text     DEFAULT 'Job Board',
   ADD COLUMN IF NOT EXISTS hash_dedupe       text,
-  ADD COLUMN IF NOT EXISTS is_active         boolean  DEFAULT true;
+  ADD COLUMN IF NOT EXISTS is_active         boolean  DEFAULT true,
+  -- ── ATS aggregator additions (Greenhouse / Lever / Ashby / Workable) ──────
+  ADD COLUMN IF NOT EXISTS sector            text,
+  ADD COLUMN IF NOT EXISTS is_internship     boolean  DEFAULT false,
+  ADD COLUMN IF NOT EXISTS is_new_grad       boolean  DEFAULT false,
+  ADD COLUMN IF NOT EXISTS tech_stack        jsonb;
 
 -- ── 2. Back-fill defaults for any existing rows ───────────────────────────────
 UPDATE jobs
@@ -50,6 +55,13 @@ CREATE INDEX IF NOT EXISTS idx_jobs_work_mode       ON jobs (work_mode);
 CREATE INDEX IF NOT EXISTS idx_jobs_state           ON jobs (state);
 CREATE INDEX IF NOT EXISTS idx_jobs_posted_at       ON jobs (posted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_hash_dedupe     ON jobs (hash_dedupe);
+
+-- ATS aggregator indexes
+CREATE INDEX IF NOT EXISTS idx_jobs_sector          ON jobs (sector);
+CREATE INDEX IF NOT EXISTS idx_jobs_is_internship   ON jobs (is_internship) WHERE is_internship = true;
+CREATE INDEX IF NOT EXISTS idx_jobs_is_new_grad     ON jobs (is_new_grad)   WHERE is_new_grad   = true;
+CREATE INDEX IF NOT EXISTS idx_jobs_source_name     ON jobs (source_name);
+CREATE INDEX IF NOT EXISTS idx_jobs_tech_stack      ON jobs USING GIN (tech_stack);
 
 -- Title search (supports ilike pattern matching)
 CREATE INDEX IF NOT EXISTS idx_jobs_title_lower
