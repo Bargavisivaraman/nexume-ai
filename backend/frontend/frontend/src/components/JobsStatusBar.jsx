@@ -1,39 +1,37 @@
 import { useEffect, useState, memo } from "react";
+import { roundedCount, timeAgo } from "../lib/format";
 
 const API = "https://landtherole-ai.onrender.com";
 const POLL_INTERVAL_MS = 30_000;
 
-function timeAgo(iso) {
-  if (!iso) return "—";
-  const diffMs = Date.now() - new Date(iso).getTime();
-  if (diffMs < 0) return "in the future";
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.floor(hr / 24);
-  return `${d}d ago`;
-}
-
-function format(n) {
-  if (n == null) return "—";
-  if (n < 1000) return String(n);
-  if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
-  return `${Math.round(n / 1000)}k`;
+function isAdmin() {
+  try { return localStorage.getItem("nexume_admin") === "1"; }
+  catch { return false; }
 }
 
 /**
  * Live job-board status bar.
- *   - Polls /jobs/stats every 30 seconds
- *   - Shows total jobs, last-updated time, new-in-last-hour badge, sources panel
- *   - Click "details" to expand source-by-source counts + recent runs
+ *
+ * Public view (default): just "X.XK+ jobs · Updated N min ago · M posted today".
+ * Admin view (localStorage "nexume_admin" = "1"): expands to show per-source
+ * counts, next auto-fetch ETA, and recent run logs.
  */
 const JobsStatusBar = memo(function JobsStatusBar() {
   const [stats, setStats] = useState(null);
-  const [open, setOpen] = useState(false);
   const [error, setError] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [admin, setAdmin] = useState(isAdmin);
+
+  // Re-check admin flag whenever the storage event fires (Settings toggle dispatches it)
+  useEffect(() => {
+    const onChange = () => setAdmin(isAdmin());
+    window.addEventListener("nexume_admin_change", onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener("nexume_admin_change", onChange);
+      window.removeEventListener("storage", onChange);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,11 +56,14 @@ const JobsStatusBar = memo(function JobsStatusBar() {
     return (
       <div className="jobs-status-bar loading">
         <span className="jobs-status-dot pulsing" />
-        <span className="jobs-status-text">Loading job market status…</span>
+        <span className="jobs-status-text jobs-status-skeleton">Loading job market status…</span>
       </div>
     );
   }
   if (error) {
+    // Show nothing user-facing when backend is unreachable — hide the bar entirely.
+    // Admins still see error inline so they can debug.
+    if (!admin) return null;
     return (
       <div className="jobs-status-bar error">
         <span className="jobs-status-dot offline" />
@@ -71,31 +72,42 @@ const JobsStatusBar = memo(function JobsStatusBar() {
     );
   }
 
-  const hasNew = stats.new_in_last_hour > 0;
+  // Posted-today metric (24h window). Falls back to server-provided count.
+  const postedToday = stats.posted_in_last_24h ?? null;
+  const totalLabel = roundedCount(stats.total_jobs);
 
   return (
-    <div className={`jobs-status-bar ${open ? "open" : ""}`}>
-      <div className="jobs-status-summary" onClick={() => setOpen((v) => !v)}>
-        <span className={`jobs-status-dot ${hasNew ? "live" : "idle"}`} />
+    <div className={`jobs-status-bar ${admin && open ? "open" : ""}`}>
+      <div
+        className="jobs-status-summary"
+        onClick={admin ? () => setOpen((v) => !v) : undefined}
+        style={{ cursor: admin ? "pointer" : "default" }}
+      >
+        <span className="jobs-status-dot live" />
         <span className="jobs-status-text">
-          <strong>{format(stats.total_jobs)}</strong> jobs · updated {timeAgo(stats.last_updated)}
+          {totalLabel && <strong>{totalLabel}</strong>}
+          {totalLabel ? " jobs" : null}
+          {stats.last_updated ? <> · Updated {timeAgo(stats.last_updated)}</> : null}
         </span>
-        {hasNew && (
+        {postedToday > 0 && (
           <span className="jobs-status-new-badge">
             <span className="jobs-status-new-dot" />
-            {stats.new_in_last_hour} new this hour
+            {roundedCount(postedToday)} posted today
           </span>
         )}
-        <span className="jobs-status-toggle">{open ? "▴ Hide details" : "▾ Sources"}</span>
+        <span className="jobs-status-cadence">New jobs added every 5 min</span>
+        {admin && (
+          <span className="jobs-status-toggle">{open ? "▴ Hide admin" : "▾ Admin"}</span>
+        )}
       </div>
 
-      {open && (
+      {admin && open && (
         <div className="jobs-status-detail">
           <div className="jobs-status-grid">
             {Object.entries(stats.sources || {}).map(([src, count]) => (
               <div key={src} className="jobs-status-source">
                 <div className="jobs-status-source-name">{src}</div>
-                <div className="jobs-status-source-count">{format(count)}</div>
+                <div className="jobs-status-source-count">{roundedCount(count) ?? "—"}</div>
               </div>
             ))}
           </div>
@@ -106,7 +118,7 @@ const JobsStatusBar = memo(function JobsStatusBar() {
           )}
           {stats.recent_runs?.length > 0 && (
             <div className="jobs-status-runs">
-              <div className="jobs-status-runs-label">Recent runs</div>
+              <div className="jobs-status-runs-label">Recent fetch runs</div>
               {stats.recent_runs.map((r) => (
                 <div key={r.id} className="jobs-status-run">
                   <span className="jobs-status-run-time">{timeAgo(r.completed_at || r.created_at)}</span>

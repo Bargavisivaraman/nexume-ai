@@ -147,7 +147,57 @@ function SettingsModal({ onClose, theme, setTheme }) {
             )}
           </div>
 
+          {/* ── Admin (hidden by default; click 5× to enable, then toggle) ── */}
+          <AdminSettingsGroup />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminSettingsGroup() {
+  const [adminOn, setAdminOn] = useState(() => {
+    try { return localStorage.getItem("nexume_admin") === "1"; } catch { return false; }
+  });
+  const [unlocks, setUnlocks] = useState(0);
+  const unlocked = adminOn || unlocks >= 5;
+
+  const toggle = (next) => {
+    try {
+      if (next) localStorage.setItem("nexume_admin", "1");
+      else      localStorage.removeItem("nexume_admin");
+      window.dispatchEvent(new Event("nexume_admin_change"));
+      setAdminOn(next);
+    } catch {}
+  };
+
+  if (!unlocked) {
+    return (
+      <div className="sm-group" style={{ opacity: 0.6 }}>
+        <div
+          className="sm-group-label"
+          style={{ cursor: "pointer", userSelect: "none" }}
+          onClick={() => setUnlocks(u => u + 1)}
+          title="Click 5 times to unlock admin controls"
+        >
+          ⓘ Nexume · v1.0
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sm-group">
+      <div className="sm-group-label">🛠 Admin</div>
+      <div className="sm-row">
+        <span className="sm-row-text">Show ingestion details on Jobs tab</span>
+        <div className="theme-toggle">
+          <button className={`theme-option ${adminOn ? "active" : ""}`} onClick={() => toggle(true)}>On</button>
+          <button className={`theme-option ${!adminOn ? "active" : ""}`} onClick={() => toggle(false)}>Off</button>
+        </div>
+      </div>
+      <div className="sm-empty" style={{ padding: "8px 0 0", fontSize: 11.5, textAlign: "left", lineHeight: 1.5 }}>
+        Adds an "Admin" expander to the Jobs status bar showing source-by-source counts, recent ingestion runs, and next auto-fetch ETA. Users won't see this.
       </div>
     </div>
   );

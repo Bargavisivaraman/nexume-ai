@@ -1008,6 +1008,21 @@ async def jobs_stats():
             .gte("fetched_at", one_hour_ago).limit(1).execute().count
         ) or 0
 
+        # Jobs whose ORIGINAL posting timestamp is within the last 24h.
+        # This is the metric users see ("posted today"); it intentionally
+        # excludes our internal fetched_at because that just means "we
+        # ingested it" — not "the company posted it today".
+        twenty_four_ago = (now - timedelta(hours=24)).isoformat()
+        try:
+            posted_today = (
+                supabase.table("jobs").select("job_id", count="exact")
+                .gte("posted_at", twenty_four_ago)
+                .eq("is_active", True)
+                .limit(1).execute().count
+            ) or 0
+        except Exception:
+            posted_today = None
+
         # Source counts — keep cheap, only common sources
         source_counts = {}
         for s in ("Greenhouse", "Lever", "Ashby", "Workable"):
@@ -1038,13 +1053,14 @@ async def jobs_stats():
             pass
 
         return {
-            "total_jobs":        total,
-            "last_updated":      last_updated,
-            "new_in_last_hour":  new_count,
-            "sources":           source_counts,
-            "recent_runs":       runs,
-            "next_run":          next_run,
-            "server_time":       now.isoformat(),
+            "total_jobs":           total,
+            "last_updated":         last_updated,
+            "new_in_last_hour":     new_count,
+            "posted_in_last_24h":   posted_today,
+            "sources":              source_counts,
+            "recent_runs":          runs,
+            "next_run":             next_run,
+            "server_time":          now.isoformat(),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

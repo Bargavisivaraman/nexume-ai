@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, memo } from "react";
 import useSavedJobs from "../hooks/useSavedJobs";
 import JobsStatusBar from "./JobsStatusBar";
 import { filterJobsForRole, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
+import { roundedCount, isJobNew } from "../lib/format";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -271,7 +272,7 @@ function MajorPicker({ value, onChange }) {
           <>
             <span className="sector-picker-emoji">🎓</span>
             <span className="sector-picker-label">Pick your major</span>
-            <span className="sector-picker-count">{MAJORS.length}+ · {TOTAL_ROLE_COUNT} roles</span>
+            <span className="sector-picker-count">{roundedCount(MAJORS.length)} majors · {roundedCount(TOTAL_ROLE_COUNT)} roles</span>
             <span className="sector-picker-chev">▾</span>
           </>
         )}
@@ -281,7 +282,7 @@ function MajorPicker({ value, onChange }) {
         <div className="sector-popover major-popover">
           <input
             className="sector-popover-search"
-            placeholder={`Search ${MAJORS.length}+ majors or ${TOTAL_ROLE_COUNT}+ roles…`}
+            placeholder={`Search ${roundedCount(MAJORS.length)} majors or ${roundedCount(TOTAL_ROLE_COUNT)} roles…`}
             value={query}
             onChange={e => setQuery(e.target.value)}
             autoFocus
@@ -300,7 +301,7 @@ function MajorPicker({ value, onChange }) {
                       <span className="sector-emoji">{m.emoji}</span>
                       <span className="sector-name">
                         {m.label}
-                        <span className="major-option-roles">{m.roles.length} roles</span>
+                        <span className="major-option-roles">{roundedCount(m.roles.length)} roles</span>
                       </span>
                     </button>
                   ))}
@@ -320,7 +321,7 @@ function MajorPicker({ value, onChange }) {
                         <span className="sector-emoji">{m.emoji}</span>
                         <span className="sector-name">
                           {m.label}
-                          <span className="major-option-roles">{m.roles.length} roles</span>
+                          <span className="major-option-roles">{roundedCount(m.roles.length)} roles</span>
                         </span>
                       </button>
                     ))}
@@ -348,7 +349,7 @@ function RolesStrip({ majorId, activeRoleId, onPickRole }) {
         <span className="jobs-roles-strip-label">
           <span className="jobs-roles-strip-emoji">{major.emoji}</span>
           <strong>{major.label}</strong>
-          <span className="jobs-roles-strip-count">{major.roles.length} role{major.roles.length !== 1 ? "s" : ""}</span>
+          <span className="jobs-roles-strip-count">{roundedCount(major.roles.length)} roles</span>
         </span>
       </div>
       <div className="jobs-roles-strip-pills">
@@ -674,11 +675,9 @@ export default function JobsTab({ onPrepInterview }) {
 
   const filteredOutCount = pickedRole ? salaryFiltered.length - visibleJobs.length : 0;
 
-  // helper: is this job freshly fetched (< 1 hour)?
-  const isFresh = (job) => {
-    if (!job.fetched_at) return false;
-    return (Date.now() - new Date(job.fetched_at).getTime()) < 3600_000;
-  };
+  // NEW badge: use posted_at < 24h (the actual job posting age, not when we fetched it).
+  // Returns false when the source did not expose a posted timestamp.
+  const isFresh = (job) => isJobNew(job);
 
   return (
     <div className="jobs-page">
