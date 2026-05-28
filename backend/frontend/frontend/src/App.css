@@ -2521,6 +2521,17 @@ li::before {
   color: #ff8aa0;
 }
 .sim-control-end:hover { transform: translateY(-1px); background: rgba(255, 77, 109, 0.16); }
+.sim-control-interrupt {
+  background: linear-gradient(135deg, rgba(255, 206, 71, 0.16) 0%, rgba(255, 206, 71, 0.05) 100%);
+  border-color: rgba(255, 206, 71, 0.45);
+  color: var(--warning);
+}
+.sim-control-interrupt:hover { transform: translateY(-1px); background: linear-gradient(135deg, rgba(255, 206, 71, 0.28) 0%, rgba(255, 206, 71, 0.10) 100%); }
+
+/* Streamed sentence reveal — active sentence is brightly lit, prior sentences fade, pending stays dim */
+.sim-sentence-active  { color: var(--text); font-weight: 500; }
+.sim-sentence-spoken  { color: var(--text-muted); }
+.sim-sentence-pending { color: var(--text-dim); }
 
 /* ── Summary scorecard ───────────────────────────────────────────────────── */
 .interview-sim-summary {

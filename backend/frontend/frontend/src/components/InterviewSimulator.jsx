@@ -25,6 +25,55 @@ const VOICES = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CONVERSATIONAL PACING
+// ─────────────────────────────────────────────────────────────────────────────
+
+// How long of a SILENCE counts as "the candidate finished speaking", per mode.
+// Technical / case interviews give people more time to think.
+const SILENCE_BY_MODE = {
+  hr:         2500,
+  behavioral: 2500,
+  technical:  4000,
+  case_study: 4000,
+  stress:     2000,
+};
+
+// TTS speed per mode — slightly snappier for HR/stress, normal for thinking-heavy modes.
+const TTS_SPEED_BY_MODE = {
+  hr:         1.05,
+  behavioral: 1.0,
+  technical:  1.0,
+  case_study: 1.0,
+  stress:     1.1,
+};
+
+// Filler / hesitation patterns at the TAIL of the running transcript.
+// If the user just said one of these, they're thinking — extend silence threshold.
+const FILLER_TAIL = /\b(um+|uh+|hmm+|er+|ah+|let me (think|see|try)|give me a (sec|second|moment)|hold on|one (sec|moment)|so|actually|like|you know|wait|okay so|and|but|because|maybe|i mean)\s*[.,]?\s*$/i;
+
+function isThinkingPause(text) {
+  if (!text) return false;
+  return FILLER_TAIL.test(text.trim());
+}
+
+/**
+ * Conservative sentence splitter. Breaks on .!? followed by whitespace or end-of-string.
+ * Keeps the terminator with the sentence so TTS gets natural intonation.
+ * Handles common abbreviations by NOT splitting on them (Dr., Mr., e.g., etc.).
+ */
+function splitSentences(text) {
+  if (!text || !text.trim()) return [];
+  // Protect common abbreviations
+  const protectedText = text
+    .replace(/\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|vs|e\.g|i\.e|etc|Inc|Co|Ltd|U\.S|U\.K)\./g, "$1¤")
+    .replace(/(\d)\.(\d)/g, "$1¤$2");
+  const parts = protectedText.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [text];
+  return parts
+    .map(s => s.replace(/¤/g, ".").trim())
+    .filter(s => s.length > 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AVATAR — animated CSS orb that breathes/pulses/listens
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -61,14 +110,23 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const [error, setError]               = useState(null);
   const [summary, setSummary]           = useState(null);
 
+  // Conversation state for streamed reveal
+  const [aiSentences, setAiSentences]     = useState([]); // sentences of the CURRENT AI turn, revealed as audio plays
+  const [activeSentence, setActiveSentence] = useState(-1); // index of sentence currently being spoken
+  const [canInterrupt, setCanInterrupt]   = useState(false);
+
   // Refs
-  const audioRef         = useRef(null);
-  const recognitionRef   = useRef(null);
-  const silenceTimerRef  = useRef(null);
-  const lastFinalRef     = useRef("");
-  const phaseRef         = useRef(phase);
-  const historyRef       = useRef(history);
-  const transcriptEndRef = useRef(null);
+  const audioRef           = useRef(null);
+  const recognitionRef     = useRef(null);
+  const silenceTimerRef    = useRef(null);
+  const lastFinalRef       = useRef("");
+  const phaseRef           = useRef(phase);
+  const historyRef         = useRef(history);
+  const transcriptEndRef   = useRef(null);
+  // v2 — interrupt + sentence pipelining
+  const interruptedRef     = useRef(false);
+  const ttsControllersRef  = useRef([]);    // AbortController per pending TTS fetch
+  const audioPlayingRef    = useRef(null);  // currently playing <Audio> instance
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { historyRef.current = history; }, [history]);
@@ -91,40 +149,88 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     speechSynthesis.speak(u);
   }), []);
 
-  // ── OpenAI TTS via backend proxy ─────────────────────────────────────────
-  const speakOpenAI = useCallback(async (text, signal) => {
-    try {
-      const res = await fetch(`${API}/interview-tts/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, speed: 1.0 }),
-        signal,
-      });
-      if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      await new Promise((resolve, reject) => {
-        const audio = new Audio(url);
-        audioRef.current = audio;
-        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-        audio.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
-        audio.play().catch(reject);
-      });
-    } catch (e) {
-      console.warn("[OpenAI TTS failed → browser fallback]", e);
-      await speakBrowser(text);
-    }
-  }, [voice, speakBrowser]);
+  // ── OpenAI TTS — single sentence fetch with cancellation ────────────────
+  const fetchTTS = useCallback(async (text, controller) => {
+    const ttsSpeed = TTS_SPEED_BY_MODE[mode] || 1.0;
+    const res = await fetch(`${API}/interview-tts/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice, speed: ttsSpeed }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }, [voice, mode]);
 
+  // ── Speak with sentence pipelining ───────────────────────────────────────
+  // Splits the AI's response into sentences, kicks off all TTS fetches in
+  // parallel, then plays them sequentially. First word reaches the user's ear
+  // in ~0.5-0.8s (vs ~2.5s when waiting for the full response's audio).
+  // Honors interrupt: if interruptedRef flips true mid-stream, stops cleanly.
   const speak = useCallback(async (text) => {
+    interruptedRef.current = false;
     setStatusMsg("Interviewer speaking…");
     setPhase("speaking");
+    setCanInterrupt(true);
+
     if (voice === "browser") {
       await speakBrowser(text);
-    } else {
-      await speakOpenAI(text);
+      setCanInterrupt(false);
+      return;
     }
-  }, [voice, speakBrowser, speakOpenAI]);
+
+    const sentences = splitSentences(text);
+    if (sentences.length === 0) { setCanInterrupt(false); return; }
+
+    setAiSentences(sentences);
+    setActiveSentence(-1);
+
+    // Kick off all fetches in parallel — browser caps concurrent connections
+    // (~6 to one host), so very long responses self-throttle gracefully.
+    ttsControllersRef.current = sentences.map(() => new AbortController());
+    const audioPromises = sentences.map((s, i) =>
+      fetchTTS(s, ttsControllersRef.current[i]).catch((e) => {
+        if (e.name !== "AbortError") console.warn(`[TTS sentence ${i}]`, e);
+        return null;
+      })
+    );
+
+    // Play sequentially while fetches race ahead
+    for (let i = 0; i < sentences.length; i++) {
+      if (interruptedRef.current) break;
+      setActiveSentence(i);
+      const url = await audioPromises[i];
+      if (interruptedRef.current) { if (url) URL.revokeObjectURL(url); continue; }
+      if (!url) continue;
+      await new Promise((resolve) => {
+        const audio = new Audio(url);
+        audioPlayingRef.current = audio;
+        audioRef.current = audio;
+        audio.onended  = () => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
+        audio.onerror  = ()   => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    }
+
+    // Cleanup any still-pending TTS URLs
+    audioPromises.forEach(p => p.then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {}));
+    setCanInterrupt(false);
+    setActiveSentence(-1);
+  }, [voice, speakBrowser, fetchTTS]);
+
+  // ── Interrupt the AI mid-speech ──────────────────────────────────────────
+  const interruptAI = useCallback(() => {
+    interruptedRef.current = true;
+    ttsControllersRef.current.forEach(c => { try { c.abort(); } catch {} });
+    ttsControllersRef.current = [];
+    if (audioPlayingRef.current) {
+      try { audioPlayingRef.current.pause(); } catch {}
+      audioPlayingRef.current = null;
+    }
+    try { speechSynthesis.cancel(); } catch {}
+    setCanInterrupt(false);
+  }, []);
 
   // ── Speech-to-text (browser native) ──────────────────────────────────────
   const startListening = useCallback(() => {
@@ -157,18 +263,20 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       }
       setInterim(interimStr || lastFinalRef.current);
 
-      // Reset silence timer on any activity
+      // Mode-aware silence threshold. If the tail of what the user just said
+      // looks like a filler ("um", "let me think", "so…"), extend the timer
+      // significantly — they're still forming the thought.
+      const utterance = (lastFinalRef.current + " " + interimStr).trim();
+      const baseSilence = SILENCE_BY_MODE[mode] || 2500;
+      const adjustedSilence = isThinkingPause(utterance) ? Math.round(baseSilence * 1.8) : baseSilence;
+
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = setTimeout(() => {
-        // 1.6 s of silence after speech → treat as end of turn
-        if (lastFinalRef.current.trim() || interimStr.trim()) {
-          const utterance = (lastFinalRef.current + " " + interimStr).trim();
-          if (utterance.length >= 2) {
-            try { rec.stop(); } catch {}
-            handleUserSpoke(utterance);
-          }
+        if (utterance.length >= 2) {
+          try { rec.stop(); } catch {}
+          handleUserSpoke(utterance);
         }
-      }, 1600);
+      }, adjustedSilence);
     };
 
     rec.onerror = (e) => {
@@ -190,7 +298,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     recognitionRef.current = rec;
     try { rec.start(); }
     catch (e) { console.warn("[SR start]", e); }
-  }, []);
+  }, [mode]); // re-create when mode changes so silence threshold updates
 
   const stopListening = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -441,12 +549,38 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       </div>
 
       <div className="interview-sim-transcript">
-        {history.map((h, i) => (
-          <div key={i} className={`interview-sim-line ${h.role}`}>
-            <span className="interview-sim-line-tag">{h.role === "ai" ? "Interviewer" : "You"}</span>
-            <span className="interview-sim-line-text">{h.content}</span>
-          </div>
-        ))}
+        {history.map((h, i) => {
+          // For the CURRENT AI turn that's actively being spoken, render
+          // sentence-by-sentence with the active sentence highlighted.
+          const isCurrentAi = h.role === "ai" && i === history.length - 1 && phase === "speaking" && aiSentences.length > 0;
+          if (isCurrentAi) {
+            return (
+              <div key={i} className="interview-sim-line ai">
+                <span className="interview-sim-line-tag">Interviewer · speaking</span>
+                <span className="interview-sim-line-text">
+                  {aiSentences.map((s, si) => (
+                    <span
+                      key={si}
+                      className={
+                        si === activeSentence ? "sim-sentence-active" :
+                        si <  activeSentence ? "sim-sentence-spoken" :
+                                              "sim-sentence-pending"
+                      }
+                    >
+                      {s}{si < aiSentences.length - 1 ? " " : ""}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className={`interview-sim-line ${h.role}`}>
+              <span className="interview-sim-line-tag">{h.role === "ai" ? "Interviewer" : "You"}</span>
+              <span className="interview-sim-line-text">{h.content}</span>
+            </div>
+          );
+        })}
         {interim && phase === "listening" && (
           <div className="interview-sim-line user interview-sim-interim">
             <span className="interview-sim-line-tag">You · live</span>
@@ -468,6 +602,15 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
             }}
           >
             ✓ I'm done answering
+          </button>
+        )}
+        {phase === "speaking" && canInterrupt && (
+          <button
+            className="sim-control-btn sim-control-interrupt"
+            onClick={interruptAI}
+            title="Stop the interviewer and start your answer"
+          >
+            ✋ Interrupt
           </button>
         )}
         <button className="sim-control-btn sim-control-end" onClick={() => endInterview()}>
