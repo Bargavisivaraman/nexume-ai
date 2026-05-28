@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from PyPDF2 import PdfReader
@@ -25,17 +25,38 @@ from jobs import (
     _classify_industry, _classify_experience,
 )
 
+# Security primitives: rate limiting, admin auth, headers, upload validation
+from security import (
+    ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX,
+    rate_limit_expensive, rate_limit_tts, rate_limit_read,
+    rate_limit_default, rate_limit_admin,
+    require_admin, security_headers_middleware,
+    validate_pdf_bytes,
+)
+
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(
+    title="Nexume API",
+    docs_url=None,       # disable /docs in production — info disclosure
+    redoc_url=None,      # disable /redoc
+    openapi_url=None,    # disable /openapi.json
+)
 
+# Security headers (must come before CORS so headers apply to CORS preflight too)
+app.middleware("http")(security_headers_middleware)
+
+# CORS — strict allow-list. nexume-ai.vercel.app + localhost + Vercel preview branches.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
+    allow_credentials=False,  # we don't use cookies; safer with allow_origin_regex
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
+    max_age=3600,
 )
+
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -875,7 +896,7 @@ async def fetch_remotive_jobs(keyword: Optional[str] = None, category: Optional[
         print(f"[Remotive] Error: {e}")
         return []
 
-@app.get("/jobs/")
+@app.get("/jobs/", dependencies=[Depends(rate_limit_read)])
 async def get_jobs(
     country:          str           = Query("US"),
     keyword:          Optional[str] = Query(None),
@@ -953,7 +974,7 @@ async def get_jobs(
         raise HTTPException(status_code=500, detail=f"Failed to query jobs: {str(e)}")
 
 
-@app.get("/jobs/status/")
+@app.get("/jobs/status/", dependencies=[Depends(rate_limit_read)])
 async def ingestion_status():
     """Returns the last 5 ingestion run results for monitoring."""
     try:
@@ -969,13 +990,13 @@ async def ingestion_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/jobs/refresh/")
+@app.post("/jobs/refresh/", dependencies=[Depends(require_admin), Depends(rate_limit_admin)])
 async def manual_refresh():
     asyncio.create_task(refresh_all_jobs())
     return {"message": "Ingestion triggered — check /jobs/status/ for progress"}
 
 
-@app.get("/jobs/stats")
+@app.get("/jobs/stats", dependencies=[Depends(rate_limit_read)])
 async def jobs_stats():
     """
     Live stats for the Jobs tab status bar.
@@ -1066,7 +1087,7 @@ async def jobs_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/jobs/ingest-ats")
+@app.post("/jobs/ingest-ats", dependencies=[Depends(require_admin), Depends(rate_limit_admin)])
 async def ingest_ats(tier: Optional[str] = Query(None, description="tier1 | tier2 | tier3 (omit for all)")):
     """
     Trigger ingestion from public ATS boards (Greenhouse, Lever, Ashby, Workable).
@@ -1089,7 +1110,7 @@ async def ingest_ats(tier: Optional[str] = Query(None, description="tier1 | tier
 # ROUTES — INTERVIEW PREP
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/generate-interview/", response_model=InterviewResponse)
+@app.post("/generate-interview/", response_model=InterviewResponse, dependencies=[Depends(rate_limit_expensive)])
 async def generate_interview(req: InterviewRequest):
     if not req.job_description or len(req.job_description.strip()) < 50:
         raise HTTPException(status_code=400, detail="Job description too short")
@@ -1151,7 +1172,7 @@ Return this exact JSON:
         raise HTTPException(status_code=500, detail=f"Interview generation failed: {str(e)}")
 
 
-@app.post("/evaluate-answer/", response_model=EvaluateResponse)
+@app.post("/evaluate-answer/", response_model=EvaluateResponse, dependencies=[Depends(rate_limit_expensive)])
 async def evaluate_answer(req: EvaluateRequest):
     if not req.question or len(req.question.strip()) < 5:
         raise HTTPException(status_code=400, detail="Question too short")
@@ -1259,7 +1280,7 @@ class InterviewTurnRequest(BaseModel):
     target_company: Optional[str] = ""
 
 
-@app.post("/interview-turn/")
+@app.post("/interview-turn/", dependencies=[Depends(rate_limit_expensive)])
 async def interview_turn(req: InterviewTurnRequest):
     """
     Returns the next interviewer line given the rolling conversation history.
@@ -1327,7 +1348,7 @@ class TTSRequest(BaseModel):
     speed: float = 1.0
 
 
-@app.post("/interview-tts/")
+@app.post("/interview-tts/", dependencies=[Depends(rate_limit_tts)])
 async def interview_tts(req: TTSRequest):
     """
     Server-side proxy for OpenAI TTS so the API key never reaches the browser.
@@ -1367,7 +1388,7 @@ class InterviewSummaryRequest(BaseModel):
     target_company: Optional[str] = ""
 
 
-@app.post("/interview-summary/")
+@app.post("/interview-summary/", dependencies=[Depends(rate_limit_expensive)])
 async def interview_summary(req: InterviewSummaryRequest):
     """Post-interview scorecard. Returns scores, strengths, weaknesses, suggested model answers."""
     if not req.history:
@@ -1420,7 +1441,7 @@ async def interview_summary(req: InterviewSummaryRequest):
 # ROUTES — RESUME ANALYSIS
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/analyze-resume/", response_model=ResumeAnalysis)
+@app.post("/analyze-resume/", response_model=ResumeAnalysis, dependencies=[Depends(rate_limit_expensive)])
 async def analyze_resume(
     file:            UploadFile     = File(...),
     job_description: Optional[str] = Form(default="")
@@ -1429,8 +1450,9 @@ async def analyze_resume(
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     contents = await file.read()
-    if len(contents) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size exceeds 5MB limit")
+    # Magic-byte + size validation. MIME type alone is client-controlled and
+    # cheap to spoof — validate the actual file header.
+    validate_pdf_bytes(contents)
 
     job_description = sanitize_text(job_description or "")
 
@@ -1531,7 +1553,7 @@ Return this exact JSON:
 # ROUTES — BULLET REWRITER
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.post("/rewrite-bullet/", response_model=RewriteResponse)
+@app.post("/rewrite-bullet/", response_model=RewriteResponse, dependencies=[Depends(rate_limit_expensive)])
 async def rewrite_bullet(req: RewriteRequest):
     if not req.bullet or len(req.bullet.strip()) < 5:
         raise HTTPException(status_code=400, detail="Bullet text too short")
@@ -1580,7 +1602,7 @@ class CoverLetterRequest(BaseModel):
     job_description: str
     tone: Optional[str] = "professional"
 
-@app.post("/generate-cover-letter/")
+@app.post("/generate-cover-letter/", dependencies=[Depends(rate_limit_expensive)])
 async def generate_cover_letter(req: CoverLetterRequest):
     if len(req.resume_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Resume text too short")
@@ -1635,7 +1657,7 @@ class LinkedInRequest(BaseModel):
     linkedin_summary: str
     target_role: Optional[str] = ""
 
-@app.post("/optimize-linkedin/")
+@app.post("/optimize-linkedin/", dependencies=[Depends(rate_limit_expensive)])
 async def optimize_linkedin(req: LinkedInRequest):
     if len(req.linkedin_summary.strip()) < 50:
         raise HTTPException(status_code=400, detail="Summary too short")
@@ -1680,7 +1702,7 @@ class ColdEmailRequest(BaseModel):
     resume_text: Optional[str] = ""
     your_name: Optional[str] = ""
 
-@app.post("/generate-cold-email/")
+@app.post("/generate-cold-email/", dependencies=[Depends(rate_limit_expensive)])
 async def generate_cold_email(req: ColdEmailRequest):
     if not req.job_title or not req.company:
         raise HTTPException(status_code=400, detail="Job title and company are required")
@@ -1727,7 +1749,7 @@ class SkillGapRequest(BaseModel):
     resume_text: str
     target_role: str
 
-@app.post("/analyze-skill-gap/")
+@app.post("/analyze-skill-gap/", dependencies=[Depends(rate_limit_expensive)])
 async def analyze_skill_gap(req: SkillGapRequest):
     if len(req.resume_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Resume text too short")
@@ -1778,7 +1800,7 @@ class SalaryRequest(BaseModel):
     target_role: str
     location: Optional[str] = "United States"
 
-@app.post("/estimate-salary/")
+@app.post("/estimate-salary/", dependencies=[Depends(rate_limit_expensive)])
 async def estimate_salary(req: SalaryRequest):
     if len(req.resume_text.strip()) < 100:
         raise HTTPException(status_code=400, detail="Resume text too short")
@@ -1895,7 +1917,7 @@ async def _fetch_jobs_for_chat(keyword: Optional[str], country: str = "US", limi
     except Exception:
         return []
 
-@app.post("/chat/")
+@app.post("/chat/", dependencies=[Depends(rate_limit_expensive)])
 async def chat(req: ChatRequest):
     last_user_msg = next(
         (m.content for m in reversed(req.messages) if m.role == "user"), ""
