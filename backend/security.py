@@ -158,7 +158,23 @@ _ADMIN_TOKEN_ENV = "NEXUME_ADMIN_TOKEN"
 
 
 def _admin_token() -> str:
-    return os.getenv(_ADMIN_TOKEN_ENV, "")
+    """
+    Resolve the admin token.
+      1. If NEXUME_ADMIN_TOKEN is explicitly set, use that.
+      2. Otherwise, derive deterministically from SUPABASE_KEY so admin
+         endpoints are still gated even when no explicit env var is set.
+         An attacker who can read SUPABASE_KEY already has full DB access,
+         so deriving from it adds no new attack surface.
+      3. If neither is available, fail closed (return empty → 404 to all callers).
+    """
+    explicit = os.getenv(_ADMIN_TOKEN_ENV, "").strip()
+    if explicit:
+        return explicit
+    supabase_key = os.getenv("SUPABASE_KEY", "")
+    if supabase_key:
+        import hashlib
+        return hashlib.sha256(f"nexume-admin-v1:{supabase_key}".encode()).hexdigest()
+    return ""
 
 
 async def require_admin(request: Request):
