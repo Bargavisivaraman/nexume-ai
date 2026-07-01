@@ -20,6 +20,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import time
 from collections import deque
@@ -197,17 +198,9 @@ async def require_admin(request: Request):
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
-    if len(a) != len(b):
-        # Still iterate to keep timing roughly constant for short inputs
-        x = b + " " * (len(a) - len(b)) if len(a) > len(b) else b[: len(a)]
-        result = 0
-        for ca, cb in zip(a, x):
-            result |= ord(ca) ^ ord(cb)
-        return False
-    result = 0
-    for ca, cb in zip(a, b):
-        result |= ord(ca) ^ ord(cb)
-    return result == 0
+    # Use the stdlib constant-time primitive instead of a hand-rolled loop.
+    # compare_digest handles length differences without leaking timing.
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 # ── Security headers middleware ──────────────────────────────────────────────
