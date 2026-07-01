@@ -49,6 +49,9 @@ build/
 .vscode/
 *.swp
 *.swo
+# Editor backup / save files
+*.save
+*.sb-*
 Thumbs.db
 
 # ────────────────────────────────────────────────────────────────────────────
