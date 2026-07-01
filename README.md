@@ -131,6 +131,18 @@ EOF
 uvicorn main:app --reload --port 8000
 ```
 
+#### Backend tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The suite covers the security primitives (PDF upload validation, the
+per-IP rate limiter, client-IP extraction, constant-time token
+comparison, and admin auth) and runs in CI on every backend change.
+
 ### Frontend
 
 ```bash
