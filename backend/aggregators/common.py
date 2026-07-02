@@ -18,19 +18,30 @@ FULLTIME_RE   = re.compile(r"\bfull[ -]?time\b", re.IGNORECASE)
 PARTTIME_RE   = re.compile(r"\bpart[ -]?time\b", re.IGNORECASE)
 CONTRACT_RE   = re.compile(r"\b(contract|contractor|freelance|temporary)\b", re.IGNORECASE)
 
-# Tech-stack tokens we look for in job descriptions
-TECH_STACK_TOKENS = [
-    "python", "javascript", "typescript", "java ", " go ", "golang", "rust",
-    "ruby", "kotlin", "swift", "c++", "c#", "php", "scala", "elixir",
-    "react", "vue", "angular", "svelte", "next.js", "nextjs", "nuxt", "remix",
-    "node.js", "nodejs", "django", "flask", "fastapi", "rails", "spring", "laravel",
-    "postgres", "postgresql", "mysql", "mongodb", "redis", "elasticsearch", "dynamodb", "cassandra",
-    "aws", "gcp", "azure", "docker", "kubernetes", "terraform", "ansible",
-    "graphql", "rest api", "grpc", "kafka", "rabbitmq",
-    "tensorflow", "pytorch", "jax", "huggingface", "langchain", "llm",
-    "tailwind", "css", "sass", "webpack", "vite",
-    "figma", "sketch",
-]
+# Tech-stack tokens → canonical display labels. Mapping (rather than a bare
+# list + string munging) keeps casing correct and lets synonyms such as
+# "postgres"/"postgresql" or "node.js"/"nodejs" collapse to one label.
+TECH_STACK_LABELS = {
+    "python": "Python", "javascript": "JavaScript", "typescript": "TypeScript",
+    "java ": "Java", " go ": "Go", "golang": "Go", "rust": "Rust",
+    "ruby": "Ruby", "kotlin": "Kotlin", "swift": "Swift", "c++": "C++", "c#": "C#",
+    "php": "PHP", "scala": "Scala", "elixir": "Elixir",
+    "react": "React", "vue": "Vue", "angular": "Angular", "svelte": "Svelte",
+    "next.js": "Next.js", "nextjs": "Next.js", "nuxt": "Nuxt", "remix": "Remix",
+    "node.js": "Node.js", "nodejs": "Node.js", "django": "Django", "flask": "Flask",
+    "fastapi": "FastAPI", "rails": "Rails", "spring": "Spring", "laravel": "Laravel",
+    "postgres": "PostgreSQL", "postgresql": "PostgreSQL", "mysql": "MySQL",
+    "mongodb": "MongoDB", "redis": "Redis", "elasticsearch": "Elasticsearch",
+    "dynamodb": "DynamoDB", "cassandra": "Cassandra",
+    "aws": "AWS", "gcp": "GCP", "azure": "Azure", "docker": "Docker",
+    "kubernetes": "Kubernetes", "terraform": "Terraform", "ansible": "Ansible",
+    "graphql": "GraphQL", "rest api": "REST API", "grpc": "gRPC",
+    "kafka": "Kafka", "rabbitmq": "RabbitMQ",
+    "tensorflow": "TensorFlow", "pytorch": "PyTorch", "jax": "JAX",
+    "huggingface": "Hugging Face", "langchain": "LangChain", "llm": "LLM",
+    "tailwind": "Tailwind", "css": "CSS", "sass": "Sass", "webpack": "Webpack", "vite": "Vite",
+    "figma": "Figma", "sketch": "Sketch",
+}
 
 
 def detect_experience_level(title: str, description: str = "") -> str:
@@ -72,18 +83,19 @@ def detect_job_type(title: str, description: str, default: Optional[str] = None)
 
 
 def extract_tech_stack(description: str, limit: int = 12) -> list[str]:
-    """Returns a deduped list of tech/skill tokens found in the description."""
+    """Returns a deduped list of tech/skill labels found in the description.
+
+    Synonyms collapse to a single canonical label (for example both
+    "postgres" and "postgresql" yield "PostgreSQL", appearing only once).
+    """
     if not description: return []
     lowered = description.lower()
     found = []
     seen = set()
-    for tok in TECH_STACK_TOKENS:
-        if tok in lowered and tok.strip() not in seen:
-            label = tok.strip().rstrip(".").title()
-            # normalize a few capitalizations
-            label = label.replace("Aws", "AWS").replace("Gcp", "GCP").replace("Sql", "SQL").replace("Css", "CSS").replace("Llm", "LLM").replace("Api", "API").replace("Rest API", "REST API").replace("Grpc", "gRPC").replace("Nodejs", "Node.js").replace("Nextjs", "Next.js")
+    for tok, label in TECH_STACK_LABELS.items():
+        if tok in lowered and label not in seen:
             found.append(label)
-            seen.add(tok.strip())
+            seen.add(label)
             if len(found) >= limit:
                 break
     return found
