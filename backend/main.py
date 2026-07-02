@@ -910,21 +910,33 @@ async def get_jobs(
     page:             int           = Query(1, ge=1),
     per_page:         int           = Query(20, ge=1, le=50),
 ):
+    supabase_offline = False
     try:
         offset = (page - 1) * per_page
-        q = build_jobs_query(
-            supabase,
-            country          = country,
-            keyword          = keyword,
-            industry         = industry,
-            job_type         = job_type,
-            experience_level = experience_level,
-            work_mode        = work_mode,
-            state_filter     = state_filter,
-            date_range       = date_range,
-        )
-        result = q.order("fetched_at", desc=True).range(offset, offset + per_page - 1).execute()
-        jobs   = result.data or []
+
+        # ── Try Supabase first, but never let it kill the request ──────────────
+        # A network / DNS failure to Supabase (e.g. project paused, DNS TTL
+        # expired) previously bubbled a 500 up to the frontend, leaving the
+        # entire Jobs tab unusable. Instead, catch the specific failure and
+        # transparently fall through to the live-API sources below.
+        jobs = []
+        try:
+            q = build_jobs_query(
+                supabase,
+                country          = country,
+                keyword          = keyword,
+                industry         = industry,
+                job_type         = job_type,
+                experience_level = experience_level,
+                work_mode        = work_mode,
+                state_filter     = state_filter,
+                date_range       = date_range,
+            )
+            result = q.order("fetched_at", desc=True).range(offset, offset + per_page - 1).execute()
+            jobs   = result.data or []
+        except Exception as e:
+            supabase_offline = True
+            print(f"[/jobs/] Supabase unavailable, using live sources only: {e}")
 
         # ── Live sources — run ALL in parallel, merge results ──────────────────
         if not jobs:
@@ -968,10 +980,18 @@ async def get_jobs(
             "count":    len(jobs),
             "has_more": len(jobs) >= per_page,
             "sources":  list({j.get("source","Unknown") for j in jobs}),
+            "supabase_offline": supabase_offline,
         }
     except Exception as e:
         print(f"[/jobs/] Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to query jobs: {str(e)}")
+        # Return an empty payload with a maintenance hint instead of 500 —
+        # the frontend can surface a clean banner rather than a broken page.
+        return {
+            "jobs": [], "page": page, "country": country.upper(),
+            "count": 0, "has_more": False, "sources": [],
+            "supabase_offline": True,
+            "error": "Job feed temporarily offline. We're restoring service.",
+        }
 
 
 @app.get("/jobs/status/", dependencies=[Depends(rate_limit_read)])
@@ -987,7 +1007,8 @@ async def ingestion_status():
         )
         return {"runs": result.data or []}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[/jobs/status/] Supabase unavailable: {e}")
+        return {"runs": [], "supabase_offline": True}
 
 
 @app.post("/jobs/refresh/", dependencies=[Depends(require_admin), Depends(rate_limit_admin)])
@@ -1082,9 +1103,24 @@ async def jobs_stats():
             "recent_runs":          runs,
             "next_run":             next_run,
             "server_time":          now.isoformat(),
+            "supabase_offline":     False,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Supabase offline (DNS fail, project paused, etc.) — return a
+        # partial payload with maintenance flag instead of 500. Frontend
+        # status bar can hide gracefully or show a maintenance banner.
+        print(f"[/jobs/stats] Supabase unavailable: {e}")
+        return {
+            "total_jobs":         None,
+            "last_updated":       None,
+            "new_in_last_hour":   None,
+            "posted_in_last_24h": None,
+            "sources":            {},
+            "recent_runs":        [],
+            "next_run":           None,
+            "server_time":        datetime.now(timezone.utc).isoformat(),
+            "supabase_offline":   True,
+        }
 
 
 @app.post("/jobs/ingest-ats", dependencies=[Depends(require_admin), Depends(rate_limit_admin)])
