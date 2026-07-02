@@ -30,3 +30,4 @@ backend/__pycache__/
 # Environment variables
 backend/.env
 .env
+.vercel

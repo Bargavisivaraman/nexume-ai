@@ -423,17 +423,33 @@ def build_jobs_query(
     if work_mode and work_mode.strip():
         q = q.eq("work_mode", work_mode.strip())
 
-    # ── State filter ─────────────────────────────────────────────────────────
+    # ── State / location filter ──────────────────────────────────────────────
+    # The user types something like "Los Angeles, CA" into the location box.
+    # That string could match any of: the `city` column, the `state` column, or
+    # the denormalized `location` column. OR across all three so we don't miss.
     if state_filter and state_filter.strip():
-        q = q.ilike("state", f"%{state_filter.strip()}%")
+        sf = state_filter.strip().replace(",", "")  # commas confuse PostgREST OR
+        # Try both the full string and the first city-name segment for better hits
+        first_token = sf.split()[0] if sf else sf
+        q = q.or_(
+            f"city.ilike.%{sf}%,"
+            f"state.ilike.%{sf}%,"
+            f"location.ilike.%{sf}%,"
+            f"city.ilike.%{first_token}%,"
+            f"location.ilike.%{first_token}%"
+        )
 
-    # ── Date range ───────────────────────────────────────────────────────────
+    # ── Date range — filter by the source's posted_at, NOT our fetched_at ────
+    # fetched_at = "we just ingested it"; posted_at = "the company posted it".
+    # Users mean the latter when they pick "Past 24 hours".
+    # Jobs without a posted_at (some sources like Lever omit it) are excluded
+    # from any restrictive date filter — better to under-include than mislead.
     if date_range and date_range != "all":
         hours_map = {"24h": 24, "7d": 168, "30d": 720}
         hours = hours_map.get(date_range)
         if hours:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-            q = q.gte("fetched_at", cutoff)
+            q = q.gte("posted_at", cutoff).not_.is_("posted_at", "null")
 
     return q
 
