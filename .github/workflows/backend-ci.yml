@@ -30,9 +30,10 @@ jobs:
           cache: pip
 
       - name: Install test dependencies
-        # The security test suite only needs FastAPI plus pytest; keep CI fast
+        # The test suite needs FastAPI (security helpers) and httpx (aggregator
+        # adapters, tested via httpx.MockTransport) plus pytest. Keep CI fast
         # and reliable rather than building the full runtime freeze.
-        run: pip install fastapi pytest
+        run: pip install fastapi httpx pytest
 
       - name: Run tests
         run: python -m pytest -q
