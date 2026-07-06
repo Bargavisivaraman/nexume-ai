@@ -67,7 +67,6 @@ COMPANIES: list[dict] = [
     {"name": "Instacart",      "ats": "greenhouse", "slug": "instacart",      "industry": "Technology", "tier": "tier2"},
     {"name": "Lyft",           "ats": "lever",      "slug": "lyft",           "industry": "Technology", "tier": "tier1"},
     {"name": "Eventbrite",     "ats": "lever",      "slug": "eventbrite",     "industry": "Technology", "tier": "tier2"},
-    {"name": "Pinterest",      "ats": "greenhouse", "slug": "pinterest",      "industry": "Technology", "tier": "tier2"},
     {"name": "Spotify",        "ats": "lever",      "slug": "spotify",        "industry": "Technology", "tier": "tier1"},
     {"name": "Roblox",         "ats": "greenhouse", "slug": "roblox",         "industry": "Technology", "tier": "tier2"},
     {"name": "Riot Games",     "ats": "greenhouse", "slug": "riotgames",      "industry": "Technology", "tier": "tier2"},
@@ -102,7 +101,6 @@ COMPANIES: list[dict] = [
     {"name": "Flexport",       "ats": "greenhouse", "slug": "flexport",       "industry": "Supply Chain", "tier": "tier2"},
 
     # ── Cybersecurity ────────────────────────────────────────────────────────
-    {"name": "Cloudflare",     "ats": "greenhouse", "slug": "cloudflare",     "industry": "Technology", "tier": "tier1"},
     {"name": "1Password",      "ats": "greenhouse", "slug": "1password",      "industry": "Technology", "tier": "tier2"},
     {"name": "Snyk",           "ats": "greenhouse", "slug": "snyk",           "industry": "Technology", "tier": "tier2"},
 
@@ -122,7 +120,6 @@ COMPANIES: list[dict] = [
     # ── Media / Design ───────────────────────────────────────────────────────
     {"name": "Canva",          "ats": "greenhouse", "slug": "canva",          "industry": "Design & Creative", "tier": "tier1"},
     {"name": "Webflow",        "ats": "greenhouse", "slug": "webflow",        "industry": "Design & Creative", "tier": "tier2"},
-    {"name": "Figma",          "ats": "ashby",      "slug": "figma",          "industry": "Design & Creative", "tier": "tier1"},
 
     # ── Education / EdTech ───────────────────────────────────────────────────
     {"name": "Duolingo",       "ats": "greenhouse", "slug": "duolingo",       "industry": "Education",  "tier": "tier2"},
