@@ -10,12 +10,17 @@ Usage from main.py:
 Or call /jobs/ingest-ats?tier=tier1 to trigger manually.
 """
 
+from __future__ import annotations
+
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import httpx
-from supabase import Client
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 from .companies import COMPANIES, list_companies_by_tier
 from .greenhouse import fetch_greenhouse
@@ -31,6 +36,30 @@ FETCHERS = {
     "ashby":      fetch_ashby,
     "workable":   fetch_workable,
 }
+
+
+def dedupe_rows_by_job_id(
+    results: list[tuple[dict, list[dict]]],
+) -> tuple[list[dict], int]:
+    """Flatten per-company fetch results into a single list, dropping rows whose
+    job_id was already seen (and rows without a job_id).
+
+    Returns ``(unique_rows, total_fetched)`` where total_fetched counts every
+    fetched row including duplicates.
+    """
+    seen_ids: set = set()
+    unique_rows: list[dict] = []
+    total_fetched = 0
+    for _company, rows in results:
+        if not rows:
+            continue
+        total_fetched += len(rows)
+        for r in rows:
+            jid = r.get("job_id")
+            if jid and jid not in seen_ids:
+                seen_ids.add(jid)
+                unique_rows.append(r)
+    return unique_rows, total_fetched
 
 
 async def _fetch_one(http: httpx.AsyncClient, company: dict) -> list[dict]:
@@ -83,18 +112,8 @@ async def run_ats_ingestion(
         results = await asyncio.gather(*[worker(c) for c in targets])
 
     # Aggregate + dedupe across companies by job_id
-    seen_ids = set()
-    all_rows: list[dict] = []
-    for company, rows in results:
-        stats["companies_run"] += 1
-        if not rows:
-            continue
-        for r in rows:
-            jid = r.get("job_id")
-            if jid and jid not in seen_ids:
-                seen_ids.add(jid)
-                all_rows.append(r)
-        stats["fetched"] += len(rows)
+    stats["companies_run"] = len(results)
+    all_rows, stats["fetched"] = dedupe_rows_by_job_id(results)
 
     # Upsert in chunks (Supabase has request-size limits)
     CHUNK = 200
