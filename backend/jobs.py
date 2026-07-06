@@ -11,15 +11,19 @@ Rules enforced here:
   - Deduplicate by external job_id; secondary dedupe by title+company+location hash
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
-from supabase import Client
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS
