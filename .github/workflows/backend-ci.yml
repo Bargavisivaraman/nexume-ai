@@ -29,11 +29,10 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install test dependencies
-        # The test suite needs FastAPI (security helpers) and httpx (aggregator
-        # adapters, tested via httpx.MockTransport) plus pytest. Keep CI fast
-        # and reliable rather than building the full runtime freeze.
-        run: pip install fastapi httpx pytest
+      - name: Install dependencies
+        # The suite now imports main.py (ATS scoring engine), which pulls in the
+        # full app dependencies, so install the dev requirements.
+        run: pip install -r requirements-dev.txt
 
       - name: Run tests
         run: python -m pytest -q
