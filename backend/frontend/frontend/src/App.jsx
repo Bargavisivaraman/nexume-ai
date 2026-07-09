@@ -1383,12 +1383,12 @@ function TrackerPage() {
                     <td className="nt-td nt-check"><div className="nt-dot" style={{background: st.color}} /></td>
                     <td className="nt-td nt-company-cell">
                       {isEdit
-                        ? <input className="nt-inline-input" value={job.company} onClick={e=>e.stopPropagation()} onChange={e=>updateField(job.id,"company",e.target.value)} />
+                        ? <input className="nt-inline-input" value={job.company ?? ""} onClick={e=>e.stopPropagation()} onChange={e=>updateField(job.id,"company",e.target.value)} />
                         : <span className="nt-company-name">{job.company}</span>}
                     </td>
                     <td className="nt-td">
                       {isEdit
-                        ? <input className="nt-inline-input" value={job.title} onClick={e=>e.stopPropagation()} onChange={e=>updateField(job.id,"title",e.target.value)} />
+                        ? <input className="nt-inline-input" value={job.title ?? ""} onClick={e=>e.stopPropagation()} onChange={e=>updateField(job.id,"title",e.target.value)} />
                         : <span className="nt-text">{job.title}</span>}
                     </td>
                     <td className="nt-td" onClick={e=>e.stopPropagation()}>
