@@ -114,6 +114,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const [aiSentences, setAiSentences]     = useState([]); // sentences of the CURRENT AI turn, revealed as audio plays
   const [activeSentence, setActiveSentence] = useState(-1); // index of sentence currently being spoken
   const [canInterrupt, setCanInterrupt]   = useState(false);
+  const [typedAnswer, setTypedAnswer]     = useState("");
 
   // Refs
   const audioRef           = useRef(null);
@@ -368,25 +369,14 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   }, []);
 
   // ── Turn handler ─────────────────────────────────────────────────────────
-  const handleUserSpoke = useCallback(async (text) => {
-    stopListening();
-    setPhase("thinking");
-
-    // Get the accurate transcript from the recorded audio; fall back to the
-    // browser recognizer's text if transcription fails or is empty.
-    setStatusMsg("Transcribing…");
-    let finalText = text;
-    try {
-      const blob = await stopRecording();
-      const accurate = await transcribeAudio(blob);
-      if (accurate) finalText = accurate;
-    } catch (e) {
-      console.warn("[handleUserSpoke] transcription error, using browser text", e);
-    }
-
+  // Core: given the candidate's final answer text, append it, get the AI's
+  // reply, speak it, and continue the loop. Shared by voice + typed answers.
+  const sendAnswer = useCallback(async (finalText) => {
     const newHistory = [...historyRef.current, { role: "user", content: finalText }];
     setHistory(newHistory);
     setInterim("");
+    setTypedAnswer("");
+    setPhase("thinking");
     setStatusMsg("Thinking…");
 
     try {
@@ -422,7 +412,48 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       setError(e.message || "Conversation interrupted.");
       setPhase("ended");
     }
-  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening, stopListening, stopRecording, transcribeAudio]);
+    // endInterview is referenced via closure (declared later); intentionally
+    // omitted from deps to avoid a temporal-dead-zone reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening]);
+
+  // Voice answer: stop capture, transcribe the recorded audio for accuracy,
+  // fall back to the browser transcript, then send.
+  const handleUserSpoke = useCallback(async (text) => {
+    stopListening();
+    setPhase("thinking");
+    setStatusMsg("Transcribing…");
+    let finalText = text;
+    try {
+      const blob = await stopRecording();
+      const accurate = await transcribeAudio(blob);
+      if (accurate) finalText = accurate;
+    } catch (e) {
+      console.warn("[handleUserSpoke] transcription error, using browser text", e);
+    }
+    await sendAnswer(finalText);
+  }, [stopListening, stopRecording, transcribeAudio, sendAnswer]);
+
+  // Typed answer: skip transcription entirely (they typed, didn't speak).
+  // Discard any recorded audio for this turn.
+  const handleTypedAnswer = useCallback(async () => {
+    const text = typedAnswer.trim();
+    if (text.length < 2) return;
+    stopListening();
+    try { await stopRecording(); } catch {} // discard audio
+    await sendAnswer(text);
+  }, [typedAnswer, stopListening, stopRecording, sendAnswer]);
+
+  // Re-record: scrap the current answer capture and start this turn over.
+  const reRecord = useCallback(async () => {
+    try { await stopRecording(); } catch {}
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; }
+    lastFinalRef.current = "";
+    setInterim("");
+    setTypedAnswer("");
+    startListening();
+  }, [stopRecording, startListening]);
 
   // ── Start / End ──────────────────────────────────────────────────────────
   const startInterview = useCallback(async () => {
@@ -686,17 +717,50 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 
       {error && <p className="error-msg" style={{ marginTop: 12 }}>{error}</p>}
 
+      {/* Type fallback — if the mic misbehaves, type the answer instead */}
+      {phase === "listening" && (
+        <div className="sim-type-row">
+          <textarea
+            className="sim-type-input"
+            placeholder="Mic acting up? Type your answer here instead…"
+            value={typedAnswer}
+            onChange={e => setTypedAnswer(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleTypedAnswer(); }
+            }}
+            rows={2}
+          />
+          <button
+            className="sim-type-send"
+            onClick={handleTypedAnswer}
+            disabled={typedAnswer.trim().length < 2}
+            title="Send typed answer (⌘/Ctrl+Enter)"
+          >
+            Send
+          </button>
+        </div>
+      )}
+
       <div className="interview-sim-controls">
         {phase === "listening" && (
-          <button
-            className="sim-control-btn sim-control-skip"
-            onClick={() => {
-              const utt = (lastFinalRef.current + " " + interim).trim();
-              if (utt.length >= 2) handleUserSpoke(utt);
-            }}
-          >
-            ✓ I'm done answering
-          </button>
+          <>
+            <button
+              className="sim-control-btn sim-control-skip"
+              onClick={() => {
+                const utt = (lastFinalRef.current + " " + interim).trim();
+                if (utt.length >= 2) handleUserSpoke(utt);
+              }}
+            >
+              ✓ I'm done answering
+            </button>
+            <button
+              className="sim-control-btn sim-control-rerecord"
+              onClick={reRecord}
+              title="Scrap this answer and start over"
+            >
+              ↻ Re-record
+            </button>
+          </>
         )}
         {phase === "speaking" && canInterrupt && (
           <button
