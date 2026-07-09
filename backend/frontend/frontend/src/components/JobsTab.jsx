@@ -464,6 +464,7 @@ export default function JobsTab({ onPrepInterview }) {
   const [jobs, setJobs]                   = useState([]);
   const [loading, setLoading]             = useState(false);
   const [error, setError]                 = useState(null);
+  const [backupMode, setBackupMode]       = useState(false); // supabase offline → live-API fallback feed
   const [retryMsg, setRetryMsg]           = useState(null);
   const [page, setPage]                   = useState(1);
   const [hasMore, setHasMore]             = useState(false);
@@ -572,6 +573,7 @@ export default function JobsTab({ onPrepInterview }) {
         setJobs(prev => [...prev, ...(data.jobs || [])]);
       }
       setHasMore(data.has_more === true);
+      setBackupMode(data.supabase_offline === true);
       setPage(pg);
     } catch (e) {
       if (e.name === "AbortError") return;
@@ -908,6 +910,11 @@ export default function JobsTab({ onPrepInterview }) {
                         <span className="jobs-result-filtered-out"> · {filteredOutCount} hidden as off-target</span>
                       )}
                     </span>
+                    {backupMode && (
+                      <span className="jobs-backup-note" title="Primary job database is being restored — showing jobs from live partner feeds instead">
+                        ⚡ Live feed · backup mode
+                      </span>
+                    )}
                     {pickedRole && (
                       <span className="jobs-result-pill">
                         <span className="jobs-result-pill-dot" />

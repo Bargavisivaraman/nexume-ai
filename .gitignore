@@ -1,11 +1,13 @@
 # ────────────────────────────────────────────────────────────────────────────
-# Secrets — NEVER commit anything matching these
+# Secrets / PII — NEVER commit anything matching these
 # ────────────────────────────────────────────────────────────────────────────
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+# Waitlist fallback store contains user emails
+backend/waitlist_fallback.jsonl
 
 # ────────────────────────────────────────────────────────────────────────────
 # Python

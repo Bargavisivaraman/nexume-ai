@@ -1,8 +1,57 @@
-import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense, Component } from "react";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
-import JobsTab from "./components/JobsTab";
-import InterviewSimulator from "./components/InterviewSimulator";
+
+// Code-split the heaviest tabs: JobsTab bundles the majors/sectors taxonomies
+// (~2k roles) and the role matcher; InterviewSimulator bundles the whole voice
+// state machine. Neither is needed to paint the landing hero.
+const JobsTab = lazy(() => import("./components/JobsTab"));
+const InterviewSimulator = lazy(() => import("./components/InterviewSimulator"));
+
+// ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
+// One crashing tab must not white-screen the whole app.
+class TabErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error, info) {
+    console.error("[TabErrorBoundary]", error, info?.componentStack);
+  }
+  componentDidUpdate(prevProps) {
+    // Reset when the user switches tabs so a crash in one tab doesn't stick
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="tab-crash-card">
+          <div className="tab-crash-emoji">😵‍💫</div>
+          <h3>Something broke on this tab</h3>
+          <p>The rest of the app is fine. Try refreshing, or switch tabs and come back.</p>
+          <button className="analyze-btn" onClick={() => window.location.reload()}>Refresh</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Suspense fallback matching the existing skeleton style
+function TabLoading() {
+  return (
+    <div className="tab-loading">
+      <div className="skeleton-line" style={{ width: "40%", height: 28, margin: "48px auto 20px" }} />
+      <div className="skeleton-line" style={{ width: "70%", height: 16, margin: "0 auto 10px" }} />
+      <div className="skeleton-line" style={{ width: "55%", height: 16, margin: "0 auto" }} />
+    </div>
+  );
+}
 
 // ── ATS BREAKDOWN ─────────────────────────────────────────────────────────────
 function ATSBreakdown({ breakdown }) {
@@ -772,6 +821,84 @@ function saveToHistory(file, result) {
   return updated;
 }
 
+// ── WAITLIST BANNER ───────────────────────────────────────────────────────────
+// Pro launches December — capture emails now. Dismissal + joined state persist
+// in localStorage so repeat visitors aren't nagged.
+const WAITLIST_KEY = "nexume_waitlist";
+
+function WaitlistBanner() {
+  const [state, setState] = useState(() => {
+    try { return localStorage.getItem(WAITLIST_KEY) || "open"; } catch { return "open"; }
+  }); // open | joined | dismissed
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  if (state === "dismissed" || state === "joined") {
+    return state === "joined" ? (
+      <div className="waitlist-banner waitlist-joined">
+        <span className="waitlist-check">✓</span> You're on the list — Pro perks land in December.
+      </div>
+    ) : null;
+  }
+
+  const submit = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmed)) {
+      setError("That email doesn't look right");
+      return;
+    }
+    setBusy(true); setError(null);
+    try {
+      const res = await fetch(`${API}/waitlist/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed, source: "hero" }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Couldn't join right now — try again in a minute");
+      }
+      try { localStorage.setItem(WAITLIST_KEY, "joined"); } catch {}
+      setState("joined");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismiss = () => {
+    try { localStorage.setItem(WAITLIST_KEY, "dismissed"); } catch {}
+    setState("dismissed");
+  };
+
+  return (
+    <div className="waitlist-banner">
+      <div className="waitlist-copy">
+        <span className="waitlist-tag">PRO · DECEMBER</span>
+        <span className="waitlist-text">Join the waitlist, lock in 50% off forever</span>
+      </div>
+      <div className="waitlist-form">
+        <input
+          className="waitlist-input"
+          type="email"
+          placeholder="you@email.com"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && !busy && submit()}
+          aria-label="Email for waitlist"
+        />
+        <button className="waitlist-btn" onClick={submit} disabled={busy}>
+          {busy ? <span className="spinner" /> : "Join"}
+        </button>
+        <button className="waitlist-dismiss" onClick={dismiss} title="Dismiss" aria-label="Dismiss waitlist banner">×</button>
+      </div>
+      {error && <p className="waitlist-error">{error}</p>}
+    </div>
+  );
+}
+
 function ResumePage() {
   const [file, setFile]           = useState(null);
   const [jdText, setJdText]       = useState("");
@@ -932,6 +1059,8 @@ function ResumePage() {
           <div className="stat-label">Sign-up required</div>
         </div>
       </div>
+
+      <WaitlistBanner />
 
       {history.length > 0 && (
         <div className="history-section">
@@ -1668,6 +1797,40 @@ function App() {
   const [interviewTitle, setInterviewTitle]   = useState(null);
   const [interviewCompany, setInterviewCompany] = useState(null);
   const [theme, setThemeState]      = useState(() => localStorage.getItem("ltr_theme") || "dark");
+  const [backendWaking, setBackendWaking] = useState(false);
+
+  // ── Cold-start killer ─────────────────────────────────────────────────────
+  // Render's free tier sleeps after inactivity and takes 30-60s to wake.
+  // Ping /warmup the moment the app mounts so the server boots while the
+  // user is still reading the hero. Show a slim banner if it's slow.
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    // If warmup hasn't answered in 2.5s, assume cold start and show banner
+    const bannerTimer = setTimeout(() => { if (!cancelled) setBackendWaking(true); }, 2500);
+
+    const warm = async (attempt = 0) => {
+      try {
+        const res = await fetch(`${API}/warmup`, { signal: controller.signal, cache: "no-store" });
+        if (res.ok) {
+          if (!cancelled) { clearTimeout(bannerTimer); setBackendWaking(false); }
+          return;
+        }
+        throw new Error(`warmup ${res.status}`);
+      } catch (e) {
+        if (cancelled || e.name === "AbortError") return;
+        if (attempt < 8) {
+          // Exponential-ish backoff: 3s, 5s, 8s, 12s… caps at 15s
+          const delay = Math.min(3000 + attempt * 2000, 15000);
+          setTimeout(() => warm(attempt + 1), delay);
+        } else if (!cancelled) {
+          setBackendWaking(false); // give up quietly; per-request retries take over
+        }
+      }
+    };
+    warm();
+    return () => { cancelled = true; controller.abort(); clearTimeout(bannerTimer); };
+  }, []);
 
   const switchTab = useCallback((newTab) => {
     const oldIdx = TAB_ORDER.indexOf(tabRef.current);
@@ -1701,14 +1864,24 @@ function App() {
     <>
       <BackgroundFX />
       <Nav tab={tab} setTab={switchTab} resetApp={resetApp} theme={theme} setTheme={setTheme} />
+      {backendWaking && (
+        <div className="waking-banner" role="status">
+          <span className="waking-dot" />
+          Waking up the engine… free hosting naps when idle. First load can take up to a minute.
+        </div>
+      )}
       <main className="main-content">
         <div className="tab-panel" key={tab} data-dir={transDir}>
-          {tab === "resume"    && <ResumePage />}
-          {tab === "cover"     && <CoverLetterPage />}
-          {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} />}
-          {tab === "interview" && <InterviewPage prefillTitle={interviewTitle} prefillCompany={interviewCompany} />}
-          {tab === "tracker"   && <TrackerPage />}
-          {tab === "tools"     && <ToolsPage />}
+          <TabErrorBoundary resetKey={tab}>
+            <Suspense fallback={<TabLoading />}>
+              {tab === "resume"    && <ResumePage />}
+              {tab === "cover"     && <CoverLetterPage />}
+              {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} />}
+              {tab === "interview" && <InterviewPage prefillTitle={interviewTitle} prefillCompany={interviewCompany} />}
+              {tab === "tracker"   && <TrackerPage />}
+              {tab === "tools"     && <ToolsPage />}
+            </Suspense>
+          </TabErrorBoundary>
         </div>
       </main>
       <Footer />

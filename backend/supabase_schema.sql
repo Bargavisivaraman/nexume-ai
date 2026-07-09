@@ -84,6 +84,22 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 CREATE INDEX IF NOT EXISTS idx_ingestion_runs_created
   ON ingestion_runs (created_at DESC);
 
+-- ── 4b. Pro waitlist ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS waitlist (
+  id           uuid         DEFAULT gen_random_uuid() PRIMARY KEY,
+  email        text         NOT NULL UNIQUE,
+  source       text         DEFAULT 'site',
+  created_at   timestamptz  DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_waitlist_created ON waitlist (created_at DESC);
+
+ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service role full access waitlist" ON waitlist;
+CREATE POLICY "Service role full access waitlist"
+  ON waitlist FOR ALL
+  USING (auth.role() = 'service_role');
+
 -- ── 5. Row-Level Security (allow public read of active jobs) ──────────────────
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
 

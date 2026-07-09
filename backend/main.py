@@ -1143,6 +1143,53 @@ async def ingest_ats(tier: Optional[str] = Query(None, description="tier1 | tier
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — WAITLIST
+# ─────────────────────────────────────────────────────────────────────────────
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+_WAITLIST_FALLBACK = os.path.join(os.path.dirname(__file__), "waitlist_fallback.jsonl")
+
+
+class WaitlistRequest(BaseModel):
+    email:  str
+    source: Optional[str] = "site"
+
+
+@app.post("/waitlist/", dependencies=[Depends(rate_limit_default)])
+async def join_waitlist(req: WaitlistRequest):
+    """
+    Pro-tier waitlist signup. Primary store is the Supabase `waitlist` table;
+    if the DB is unreachable the entry is appended to a local JSONL file so
+    no email is ever dropped. (Render's disk is ephemeral across deploys —
+    the fallback covers transient DB outages, not long-term storage.)
+    """
+    email = (req.email or "").strip().lower()
+    if not _EMAIL_RE.match(email) or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    source = (req.source or "site")[:40]
+
+    row = {
+        "email":      email,
+        "source":     source,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        # Upsert on email so repeat submits don't error or duplicate
+        supabase.table("waitlist").upsert(row, on_conflict="email").execute()
+        return {"ok": True}
+    except Exception as e:
+        print(f"[/waitlist/] Supabase unavailable, using file fallback: {e}")
+        try:
+            with open(_WAITLIST_FALLBACK, "a") as f:
+                f.write(json.dumps(row) + "\n")
+            return {"ok": True, "fallback": True}
+        except Exception as e2:
+            print(f"[/waitlist/] Fallback write failed: {e2}")
+            raise HTTPException(status_code=503, detail="Couldn't save right now — please try again shortly")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — INTERVIEW PREP
 # ─────────────────────────────────────────────────────────────────────────────
 
