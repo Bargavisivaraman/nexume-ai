@@ -122,6 +122,10 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const lastFinalRef       = useRef("");
   const phaseRef           = useRef(phase);
   const historyRef         = useRef(history);
+  // Accurate-STT capture (MediaRecorder → OpenAI transcription)
+  const mediaStreamRef     = useRef(null);   // the getUserMedia stream (kept for the session)
+  const mediaRecorderRef   = useRef(null);
+  const audioChunksRef     = useRef([]);
   const transcriptEndRef   = useRef(null);
   // v2 — interrupt + sentence pipelining
   const interruptedRef     = useRef(false);
@@ -233,6 +237,60 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   }, []);
 
   // ── Speech-to-text (browser native) ──────────────────────────────────────
+  // ── Accurate STT: record audio in parallel, transcribe via OpenAI ──────────
+  // Browser SpeechRecognition is used only for live captions + detecting WHEN
+  // the candidate stops talking. The actual answer text comes from OpenAI
+  // transcription of the recorded audio — far more accurate for technical
+  // terms and accents. Falls back to the browser transcript on any failure.
+  const startRecording = useCallback(() => {
+    try {
+      const stream = mediaStreamRef.current;
+      if (!stream || typeof MediaRecorder === "undefined") return;
+      // Pick a mime type the browser + OpenAI both accept
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
+        .find(m => MediaRecorder.isTypeSupported?.(m)) || "";
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
+      rec.start();
+      mediaRecorderRef.current = rec;
+    } catch (e) {
+      console.warn("[MediaRecorder start]", e);
+    }
+  }, []);
+
+  // Stop recording and resolve with a Blob of everything captured this turn.
+  const stopRecording = useCallback(() => new Promise((resolve) => {
+    const rec = mediaRecorderRef.current;
+    if (!rec || rec.state === "inactive") { resolve(null); return; }
+    rec.onstop = () => {
+      const type = rec.mimeType || "audio/webm";
+      const blob = audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type }) : null;
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      resolve(blob);
+    };
+    try { rec.stop(); } catch { resolve(null); }
+  }), []);
+
+  // Upload audio → accurate transcript. Returns null on any failure.
+  const transcribeAudio = useCallback(async (blob) => {
+    if (!blob || blob.size < 1200) return null; // too small to be real speech
+    try {
+      const ext = (blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm");
+      const fd = new FormData();
+      fd.append("audio", blob, `answer.${ext}`);
+      const res = await fetch(`${API}/transcribe/`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(`transcribe ${res.status}`);
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      return text.length >= 2 ? text : null;
+    } catch (e) {
+      console.warn("[transcribe] falling back to browser STT:", e);
+      return null;
+    }
+  }, []);
+
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -244,6 +302,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     setPhase("listening");
     setInterim("");
     lastFinalRef.current = "";
+    startRecording(); // capture accurate audio alongside the browser recognizer
 
     const rec = new SR();
     rec.continuous = true;
@@ -298,7 +357,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     recognitionRef.current = rec;
     try { rec.start(); }
     catch (e) { console.warn("[SR start]", e); }
-  }, [mode]); // re-create when mode changes so silence threshold updates
+  }, [mode, startRecording]); // re-create when mode changes so silence threshold updates
 
   const stopListening = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -311,11 +370,23 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   // ── Turn handler ─────────────────────────────────────────────────────────
   const handleUserSpoke = useCallback(async (text) => {
     stopListening();
-    const newHistory = [...historyRef.current, { role: "user", content: text }];
+    setPhase("thinking");
+
+    // Get the accurate transcript from the recorded audio; fall back to the
+    // browser recognizer's text if transcription fails or is empty.
+    setStatusMsg("Transcribing…");
+    let finalText = text;
+    try {
+      const blob = await stopRecording();
+      const accurate = await transcribeAudio(blob);
+      if (accurate) finalText = accurate;
+    } catch (e) {
+      console.warn("[handleUserSpoke] transcription error, using browser text", e);
+    }
+
+    const newHistory = [...historyRef.current, { role: "user", content: finalText }];
     setHistory(newHistory);
     setInterim("");
-
-    setPhase("thinking");
     setStatusMsg("Thinking…");
 
     try {
@@ -351,7 +422,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       setError(e.message || "Conversation interrupted.");
       setPhase("ended");
     }
-  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening, stopListening]);
+  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening, stopListening, stopRecording, transcribeAudio]);
 
   // ── Start / End ──────────────────────────────────────────────────────────
   const startInterview = useCallback(async () => {
@@ -360,6 +431,18 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     setSummary(null);
     setPhase("thinking");
     setStatusMsg("Preparing your interviewer…");
+
+    // Acquire one mic stream up front for MediaRecorder (accurate STT). The
+    // browser SpeechRecognition grabs its own; this is a second, explicit tap
+    // used only to record audio we send to OpenAI. Non-fatal if it fails —
+    // we just fall back to browser-only transcripts.
+    try {
+      if (!mediaStreamRef.current && navigator.mediaDevices?.getUserMedia) {
+        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    } catch (e) {
+      console.warn("[getUserMedia] accurate STT disabled, using browser only:", e);
+    }
 
     try {
       const res = await fetch(`${API}/interview-turn/`, {
@@ -390,8 +473,18 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     }
   }, [mode, jd, resume, targetRole, targetCompany, speak, startListening]);
 
+  // Release the mic stream + recorder (called when the interview ends/unmounts)
+  const releaseMic = useCallback(() => {
+    try { mediaRecorderRef.current?.state !== "inactive" && mediaRecorderRef.current?.stop(); } catch {}
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    try { mediaStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    mediaStreamRef.current = null;
+  }, []);
+
   const endInterview = useCallback(async (finalHistory) => {
     stopListening();
+    releaseMic();
     try { audioRef.current?.pause(); } catch {}
     setPhase("ended");
     setStatusMsg("Scoring your interview…");
@@ -421,16 +514,17 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       setError(e.message || "Couldn't generate summary.");
       setPhase("ended");
     }
-  }, [mode, targetRole, targetCompany, stopListening]);
+  }, [mode, targetRole, targetCompany, stopListening, releaseMic]);
 
   // ── Cleanup ──────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       stopListening();
+      releaseMic();
       try { audioRef.current?.pause(); } catch {}
       try { speechSynthesis.cancel(); } catch {}
     };
-  }, [stopListening]);
+  }, [stopListening, releaseMic]);
 
   // Force voices to load (some browsers lazy-load)
   useEffect(() => {

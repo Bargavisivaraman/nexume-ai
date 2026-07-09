@@ -1464,6 +1464,51 @@ async def interview_tts(req: TTSRequest):
         raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 
+@app.post("/transcribe/", dependencies=[Depends(rate_limit_tts)])
+async def transcribe(audio: UploadFile = File(...)):
+    """
+    Accurate speech-to-text for the mock interview. The frontend records the
+    candidate's spoken answer with MediaRecorder and posts it here; we transcribe
+    it via OpenAI (far more accurate than the browser's built-in recognition,
+    especially for technical terms and accented speech).
+
+    Tries gpt-4o-transcribe first, falls back to whisper-1 if that model isn't
+    available on the account. Returns {"text": "..."}.
+    """
+    data = await audio.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty audio")
+    # Cap at ~15 MB — a couple minutes of Opus/WebM audio. Guards against abuse.
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio too large")
+
+    # OpenAI needs a filename with an extension it recognises to sniff the format.
+    filename = audio.filename or "answer.webm"
+    if "." not in filename:
+        filename += ".webm"
+
+    def _transcribe(model: str) -> str:
+        buf = io.BytesIO(data)
+        buf.name = filename
+        resp = openai_client.audio.transcriptions.create(
+            model=model,
+            file=buf,
+            language="en",
+        )
+        return (resp.text or "").strip()
+
+    try:
+        try:
+            text = await asyncio.to_thread(_transcribe, "gpt-4o-transcribe")
+        except Exception as e_primary:
+            # Model unavailable / not enabled on account → fall back to whisper-1
+            print(f"[/transcribe/] gpt-4o-transcribe failed ({e_primary}); trying whisper-1")
+            text = await asyncio.to_thread(_transcribe, "whisper-1")
+        return {"text": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
 class InterviewSummaryRequest(BaseModel):
     mode:           str = "hr"
     history:        List[dict] = []
