@@ -1303,7 +1303,8 @@ li::before {
   width: 200px; height: 1px;
   background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.4), transparent);
 }
-.footer p { font-size: 12.5px; color: var(--text-dim); margin: 0; letter-spacing: 0.005em; }
+/* --text-muted (not -dim) here: footer text was failing WCAG contrast at 2.89:1 */
+.footer p { font-size: 12.5px; color: var(--text-muted); margin: 0; letter-spacing: 0.005em; }
 .footer span {
   background: var(--g-text-violet);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
