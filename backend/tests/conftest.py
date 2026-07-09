@@ -64,3 +64,55 @@ class FakeRequest:
 @pytest.fixture
 def make_request():
     return FakeRequest
+
+
+# ── Fake httpx client for the job-board fetchers ─────────────────────────────
+# The fetch_* functions in main.py build their own httpx.AsyncClient internally,
+# so we patch httpx.AsyncClient with a fake that returns canned responses.
+
+class FakeResponse:
+    def __init__(self, json_data, status_code=200):
+        self._json = json_data
+        self.status_code = status_code
+
+    def json(self):
+        return self._json
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
+
+class FakeAsyncClient:
+    """Async-context-manager client whose get() returns queued responses."""
+
+    def __init__(self, responses):
+        self._responses = responses
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, *args, **kwargs):
+        if isinstance(self._responses, list):
+            return self._responses.pop(0) if self._responses else FakeResponse({}, 200)
+        return self._responses
+
+
+@pytest.fixture
+def patch_httpx(monkeypatch):
+    """Patch main.httpx.AsyncClient to serve the given JSON bodies.
+
+    Pass one body for single-request fetchers, or several for paginated ones
+    (they are returned in order). Use status= to simulate an HTTP error.
+    """
+    import main
+
+    def _patch(*bodies, status=200):
+        wrapped = [FakeResponse(b, status) for b in bodies]
+        payload = wrapped[0] if len(wrapped) == 1 else wrapped
+        monkeypatch.setattr(main.httpx, "AsyncClient", lambda *a, **k: FakeAsyncClient(payload))
+
+    return _patch
