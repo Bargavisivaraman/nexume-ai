@@ -2439,6 +2439,118 @@ li::before {
   100% { transform: scale(1.4); opacity: 0; }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   INTERVIEWER AVATAR — animated character face
+   ════════════════════════════════════════════════════════════════════════════ */
+.iv-avatar {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: 16px 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.iv-avatar-svg { width: 168px; height: 168px; position: relative; z-index: 1; overflow: visible; }
+
+/* glow behind head — recolors per state */
+.iv-avatar-glow {
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(124,31,255,0.30) 0%, transparent 62%);
+  filter: blur(22px);
+  z-index: 0;
+  transition: background 0.5s var(--e-smooth);
+}
+.iv-avatar-listening .iv-avatar-glow { background: radial-gradient(circle, rgba(34,229,151,0.30) 0%, transparent 62%); }
+.iv-avatar-thinking  .iv-avatar-glow { background: radial-gradient(circle, rgba(255,206,71,0.26) 0%, transparent 62%); }
+.iv-avatar-ended     .iv-avatar-glow,
+.iv-avatar-idle      .iv-avatar-glow { background: radial-gradient(circle, rgba(124,31,255,0.14) 0%, transparent 62%); }
+
+/* subtle head bob while speaking / breathe while listening */
+.iv-head { transition: filter 0.4s; }
+.iv-avatar-speaking  .iv-avatar-svg { animation: ivBob 1.6s ease-in-out infinite; }
+.iv-avatar-listening .iv-avatar-svg { animation: ivBreathe 3.4s ease-in-out infinite; }
+.iv-avatar-ended     .iv-avatar-svg,
+.iv-avatar-idle      .iv-avatar-svg { opacity: 0.85; }
+@keyframes ivBob     { 0%,100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-3px) rotate(-0.6deg); } }
+@keyframes ivBreathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+
+/* status dot / antenna pulse */
+.iv-antenna { transform-origin: 100px 12px; animation: ivAntenna 2.4s ease-in-out infinite; }
+@keyframes ivAntenna { 0%,100% { opacity: 0.7; } 50% { opacity: 1; filter: drop-shadow(0 0 5px #d946ef); } }
+
+/* eyes blink (periodic) — scaleY squash from the eye centre (y≈92) */
+.iv-eye { transform-box: fill-box; transform-origin: center; animation: ivBlink 5.2s infinite; }
+.iv-eye-r { animation-delay: 0.06s; }
+@keyframes ivBlink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95%           { transform: scaleY(0.12); }
+}
+/* thinking → eyes glance up + brows raise */
+.iv-avatar-thinking .iv-eyes  { transform: translateY(-4px); transition: transform 0.35s; }
+.iv-eyes { transition: transform 0.35s var(--e-smooth); }
+.iv-brows { transform-box: fill-box; transform-origin: center; transition: transform 0.35s var(--e-smooth); }
+.iv-avatar-thinking .iv-brows { transform: translateY(-5px); }
+.iv-avatar-listening .iv-brows { transform: translateY(-2px); }
+
+/* ── MOUTH — the lip-sync ──────────────────────────────────────────────── */
+/* Default: hide the rectangle mouth, show the resting smile curve */
+.iv-mouth  { transform-box: fill-box; transform-origin: center; opacity: 0; }
+.iv-smile  { opacity: 1; transition: opacity 0.25s, d 0.25s; }
+
+/* Speaking: hide smile, show rectangle mouth animating open/close (talking).
+   Organic variation via uneven keyframe stops so it doesn't look metronomic. */
+.iv-avatar-speaking .iv-smile { opacity: 0; }
+.iv-avatar-speaking .iv-mouth {
+  opacity: 1;
+  animation: ivTalk 0.42s ease-in-out infinite;
+}
+@keyframes ivTalk {
+  0%   { transform: scaleY(0.35) scaleX(0.9); }
+  18%  { transform: scaleY(1.35) scaleX(1.02); }
+  34%  { transform: scaleY(0.55) scaleX(0.94); }
+  52%  { transform: scaleY(1.6)  scaleX(1.05); }
+  70%  { transform: scaleY(0.4)  scaleX(0.92); }
+  86%  { transform: scaleY(1.15) scaleX(1); }
+  100% { transform: scaleY(0.5)  scaleX(0.95); }
+}
+/* Listening: keep the smile but a touch wider/attentive */
+.iv-avatar-listening .iv-smile { stroke-width: 5.5; }
+/* Thinking: pursed small mouth (show narrow rect, no animation) */
+.iv-avatar-thinking .iv-smile  { opacity: 0; }
+.iv-avatar-thinking .iv-mouth  { opacity: 1; transform: scaleX(0.5) scaleY(0.7); }
+
+/* Speaking audio-bars badge (little equalizer under the face) */
+.iv-avatar-bars {
+  position: absolute;
+  bottom: -4px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 3px; align-items: flex-end;
+  height: 14px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: 2;
+}
+.iv-avatar-bars span {
+  width: 3px; height: 100%;
+  background: var(--g-violet);
+  border-radius: 2px;
+  transform-origin: bottom;
+}
+.iv-avatar-speaking .iv-avatar-bars { opacity: 1; }
+.iv-avatar-speaking .iv-avatar-bars span { animation: ivBars 0.7s ease-in-out infinite; }
+.iv-avatar-bars span:nth-child(1) { animation-delay: 0s;    }
+.iv-avatar-bars span:nth-child(2) { animation-delay: 0.15s; }
+.iv-avatar-bars span:nth-child(3) { animation-delay: 0.3s;  }
+.iv-avatar-bars span:nth-child(4) { animation-delay: 0.1s;  }
+@keyframes ivBars { 0%,100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .iv-avatar-svg, .iv-eye, .iv-mouth, .iv-antenna, .iv-avatar-bars span { animation: none !important; }
+}
+
 /* ── Status + transcript ─────────────────────────────────────────────────── */
 .interview-sim-status {
   display: flex;

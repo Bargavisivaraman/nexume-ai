@@ -90,6 +90,64 @@ function InterviewerOrb({ state }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// InterviewerAvatar — stylized character face that reacts to the interview state.
+//   speaking  → mouth animates (rhythmic lip-sync) + violet glow
+//   listening → attentive, green glow, eyes focused
+//   thinking  → eyes glance up, "hmm" mouth, amber glow
+//   idle/ended→ neutral resting face
+// Pure SVG + CSS so it can never interfere with audio playback.
+// ─────────────────────────────────────────────────────────────────────────────
+function InterviewerAvatar({ state }) {
+  return (
+    <div className={`iv-avatar iv-avatar-${state}`} aria-hidden="true">
+      <div className="iv-avatar-glow" />
+      <svg className="iv-avatar-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="ivHead" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#241147" />
+            <stop offset="1" stopColor="#160a2e" />
+          </linearGradient>
+          <linearGradient id="ivFace" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#c084fc" />
+            <stop offset="1" stopColor="#7c1fff" />
+          </linearGradient>
+        </defs>
+
+        {/* head */}
+        <rect className="iv-head" x="34" y="30" width="132" height="140" rx="44" fill="url(#ivHead)" stroke="rgba(168,85,247,0.5)" strokeWidth="1.5" />
+        {/* little antenna / status dot — reads as an AI/headset cue */}
+        <line x1="100" y1="30" x2="100" y2="16" stroke="rgba(168,85,247,0.6)" strokeWidth="3" strokeLinecap="round" />
+        <circle className="iv-antenna" cx="100" cy="12" r="5" fill="url(#ivFace)" />
+
+        {/* eyes */}
+        <g className="iv-eyes" fill="url(#ivFace)">
+          <ellipse className="iv-eye iv-eye-l" cx="76" cy="92" rx="11" ry="13" />
+          <ellipse className="iv-eye iv-eye-r" cx="124" cy="92" rx="11" ry="13" />
+        </g>
+        {/* eye shine */}
+        <circle cx="79" cy="87" r="3" fill="#fff" opacity="0.85" />
+        <circle cx="127" cy="87" r="3" fill="#fff" opacity="0.85" />
+
+        {/* brows (raise slightly when thinking) */}
+        <g className="iv-brows" stroke="rgba(192,132,252,0.7)" strokeWidth="3.5" strokeLinecap="round">
+          <line className="iv-brow-l" x1="64" y1="72" x2="88" y2="70" />
+          <line className="iv-brow-r" x1="112" y1="70" x2="136" y2="72" />
+        </g>
+
+        {/* mouth — an SVG group we scale/shape per state */}
+        <g className="iv-mouth-wrap">
+          <rect className="iv-mouth" x="80" y="126" width="40" height="10" rx="5" fill="url(#ivFace)" />
+          {/* resting smile curve, shown when not speaking */}
+          <path className="iv-smile" d="M78 128 Q100 142 122 128" fill="none" stroke="url(#ivFace)" strokeWidth="5" strokeLinecap="round" />
+        </g>
+      </svg>
+      {/* audio bars badge — visible while speaking */}
+      <div className="iv-avatar-bars"><span/><span/><span/><span/></div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -666,7 +724,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   // Active interview view
   return (
     <div className="interview-sim-stage">
-      <InterviewerOrb state={phase} />
+      <InterviewerAvatar state={phase} />
 
       <div className="interview-sim-status">
         <span className="interview-sim-mode-tag">{MODES.find(m => m.id === mode)?.emoji} {MODES.find(m => m.id === mode)?.label}</span>
