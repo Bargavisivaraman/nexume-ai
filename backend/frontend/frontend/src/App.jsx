@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense, Component } from "react";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
+import { trackerToCsv } from "./lib/trackerStore";
 
 // Code-split the heaviest tabs: JobsTab bundles the majors/sectors taxonomies
 // (~2k roles) and the role matcher; InterviewSimulator bundles the whole voice
@@ -1187,9 +1188,11 @@ function ResumePage() {
 }
 
 // ── COVER LETTER PAGE ─────────────────────────────────────────────────────────
-function CoverLetterPage() {
+function CoverLetterPage({ prefill }) {
   const [resumeText, setResumeText] = useState("");
-  const [jd, setJd]               = useState("");
+  // Prefill flows in from the Jobs tab's "✉ Cover letter" button on a job card.
+  // Safe as initial state: the tab panel remounts this component on tab switch.
+  const [jd, setJd]               = useState(() => prefill?.jd || "");
   const [tone, setTone]           = useState("professional");
   const [loading, setLoading]     = useState(false);
   const [result, setResult]       = useState(null);
@@ -1353,7 +1356,26 @@ function TrackerPage() {
               </button>
             ))}
           </div>
-          <button className="add-job-btn" onClick={() => setShowModal(true)}>+ New</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {jobs.length > 0 && (
+              <button
+                className="tr-filter-btn"
+                title="Download your applications as CSV"
+                onClick={() => {
+                  const blob = new Blob([trackerToCsv(jobs)], { type: "text/csv;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "nexume-applications.csv";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                ⬇ Export CSV
+              </button>
+            )}
+            <button className="add-job-btn" onClick={() => setShowModal(true)}>+ New</button>
+          </div>
         </div>
 
         {/* table */}
@@ -1796,6 +1818,7 @@ function App() {
   const tabRef                      = useRef("resume");
   const [interviewTitle, setInterviewTitle]   = useState(null);
   const [interviewCompany, setInterviewCompany] = useState(null);
+  const [coverPrefill, setCoverPrefill]       = useState(null);
   const [theme, setThemeState]      = useState(() => localStorage.getItem("ltr_theme") || "dark");
   const [backendWaking, setBackendWaking] = useState(false);
 
@@ -1855,6 +1878,19 @@ function App() {
     switchTab("interview");
   };
 
+  // "✉ Cover letter" on a job card → jump to the Cover tab with the JD prefilled
+  const handleCoverLetter = (job) => {
+    const jdText = [
+      job?.title && `Role: ${job.title}`,
+      job?.company && `Company: ${job.company}`,
+      job?.location && `Location: ${job.location}`,
+      "",
+      job?.description || "",
+    ].filter(x => x !== undefined && x !== null).join("\n");
+    setCoverPrefill({ jd: jdText.trim() });
+    switchTab("cover");
+  };
+
   const resetApp = () => {
     setInterviewTitle(null);
     setInterviewCompany(null);
@@ -1875,8 +1911,8 @@ function App() {
           <TabErrorBoundary resetKey={tab}>
             <Suspense fallback={<TabLoading />}>
               {tab === "resume"    && <ResumePage />}
-              {tab === "cover"     && <CoverLetterPage />}
-              {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} />}
+              {tab === "cover"     && <CoverLetterPage prefill={coverPrefill} />}
+              {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} onCoverLetter={handleCoverLetter} />}
               {tab === "interview" && <InterviewPage prefillTitle={interviewTitle} prefillCompany={interviewCompany} />}
               {tab === "tracker"   && <TrackerPage />}
               {tab === "tools"     && <ToolsPage />}

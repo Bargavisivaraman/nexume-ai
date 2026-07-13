@@ -1521,6 +1521,25 @@ li::before {
   font-family: inherit;
 }
 .li-prep-btn:hover { border-color: var(--v-500); color: var(--text); background: rgba(124, 31, 255, 0.06); }
+.li-track-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.22s var(--e-smooth);
+  font-family: inherit;
+}
+.li-track-btn:hover:not(:disabled) { border-color: rgba(34, 229, 151, 0.5); color: #4be5b3; background: rgba(34, 229, 151, 0.06); }
+.li-track-btn.tracked {
+  color: #4be5b3;
+  border-color: rgba(34, 229, 151, 0.35);
+  background: rgba(34, 229, 151, 0.08);
+  cursor: default;
+}
 .li-source-badge {
   margin-left: auto;
   font-size: 10px;

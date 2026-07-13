@@ -9,6 +9,7 @@ import { expandSearchQuery } from "../lib/search";
 import { getSource, formatEmploymentType } from "../lib/jobMeta";
 import { getResumeKeywords, matchScore } from "../lib/resumeMatch";
 import { INDUSTRY_COLORS, EXP_COLORS } from "../lib/badgeColors";
+import { loadTracker, addJobToTracker, isJobTracked } from "../lib/trackerStore";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -345,9 +346,11 @@ function TrendingStrip({ onPick, active }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Jobs Tab
 // ─────────────────────────────────────────────────────────────────────────────
-export default function JobsTab({ onPrepInterview }) {
+export default function JobsTab({ onPrepInterview, onCoverLetter }) {
   const [country, setCountry]             = useState("US");
   const [query, setQuery]                 = useState("");
+  // Application-tracker integration: one-click "Track" from any job card
+  const [trackerList, setTrackerList]     = useState(loadTracker);
   const [locationQuery, setLocationQuery] = useState("Los Angeles, CA");
   const [activeSector, setActiveSector]   = useState(null);   // sector id
   const [activeMajor, setActiveMajor]     = useState(null);   // major id
@@ -913,6 +916,28 @@ export default function JobsTab({ onPrepInterview }) {
                         <button className="li-prep-btn" onClick={() => onPrepInterview(job.title, job.company)}>
                           Prep Interview
                         </button>
+                        {(() => {
+                          const tracked = isJobTracked(job, trackerList);
+                          return (
+                            <button
+                              className={`li-track-btn ${tracked ? "tracked" : ""}`}
+                              disabled={tracked}
+                              onClick={() => setTrackerList(addJobToTracker(job, trackerList))}
+                              title={tracked ? "Already in your Application Tracker" : "Add to Application Tracker"}
+                            >
+                              {tracked ? "✓ Tracked" : "＋ Track"}
+                            </button>
+                          );
+                        })()}
+                        {onCoverLetter && (
+                          <button
+                            className="li-prep-btn"
+                            onClick={() => onCoverLetter(job)}
+                            title="Generate a cover letter for this job"
+                          >
+                            ✉ Cover letter
+                          </button>
+                        )}
                         {(job.source || job.source_name) && (
                           <span className="li-source-badge">{job.source || job.source_name}</span>
                         )}
