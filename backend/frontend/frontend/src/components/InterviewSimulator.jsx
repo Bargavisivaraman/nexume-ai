@@ -1,77 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { isThinkingPause, splitSentences } from "../lib/speech";
+import {
+  MODES,
+  VOICES,
+  SILENCE_BY_MODE,
+  TTS_SPEED_BY_MODE,
+} from "../lib/interviewConfig";
 
 const API = "https://landtherole-ai.onrender.com";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MODES + VOICES
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MODES = [
-  { id: "hr",          label: "HR Screen",        emoji: "👋", desc: "Warm 20-min recruiter screen" },
-  { id: "behavioral",  label: "Behavioral",       emoji: "💬", desc: "STAR-format storytelling" },
-  { id: "technical",   label: "Technical",        emoji: "🛠️", desc: "Probing engineering interview" },
-  { id: "case_study",  label: "Case Study",       emoji: "🧩", desc: "Consulting / business case" },
-  { id: "stress",      label: "Stress Interview", emoji: "🔥", desc: "Aggressive challenging follow-ups" },
-];
-
-const VOICES = [
-  { id: "nova",     label: "Nova",     desc: "Warm female · OpenAI" },
-  { id: "shimmer",  label: "Shimmer",  desc: "Bright female · OpenAI" },
-  { id: "alloy",    label: "Alloy",    desc: "Neutral · OpenAI" },
-  { id: "echo",     label: "Echo",     desc: "Smooth male · OpenAI" },
-  { id: "onyx",     label: "Onyx",     desc: "Deep male · OpenAI" },
-  { id: "fable",    label: "Fable",    desc: "Crisp British · OpenAI" },
-  { id: "browser",  label: "Browser",  desc: "Free, robotic · no API call" },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONVERSATIONAL PACING
-// ─────────────────────────────────────────────────────────────────────────────
-
-// How long of a SILENCE counts as "the candidate finished speaking", per mode.
-// Technical / case interviews give people more time to think.
-const SILENCE_BY_MODE = {
-  hr:         2500,
-  behavioral: 2500,
-  technical:  4000,
-  case_study: 4000,
-  stress:     2000,
-};
-
-// TTS speed per mode — slightly snappier for HR/stress, normal for thinking-heavy modes.
-const TTS_SPEED_BY_MODE = {
-  hr:         1.05,
-  behavioral: 1.0,
-  technical:  1.0,
-  case_study: 1.0,
-  stress:     1.1,
-};
-
-// Filler / hesitation patterns at the TAIL of the running transcript.
-// If the user just said one of these, they're thinking — extend silence threshold.
-const FILLER_TAIL = /\b(um+|uh+|hmm+|er+|ah+|let me (think|see|try)|give me a (sec|second|moment)|hold on|one (sec|moment)|so|actually|like|you know|wait|okay so|and|but|because|maybe|i mean)\s*[.,]?\s*$/i;
-
-function isThinkingPause(text) {
-  if (!text) return false;
-  return FILLER_TAIL.test(text.trim());
-}
-
-/**
- * Conservative sentence splitter. Breaks on .!? followed by whitespace or end-of-string.
- * Keeps the terminator with the sentence so TTS gets natural intonation.
- * Handles common abbreviations by NOT splitting on them (Dr., Mr., e.g., etc.).
- */
-function splitSentences(text) {
-  if (!text || !text.trim()) return [];
-  // Protect common abbreviations
-  const protectedText = text
-    .replace(/\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|vs|e\.g|i\.e|etc|Inc|Co|Ltd|U\.S|U\.K)\./g, "$1¤")
-    .replace(/(\d)\.(\d)/g, "$1¤$2");
-  const parts = protectedText.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [text];
-  return parts
-    .map(s => s.replace(/¤/g, ".").trim())
-    .filter(s => s.length > 0);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AVATAR — animated CSS orb that breathes/pulses/listens
