@@ -25,7 +25,10 @@ export function isThinkingPause(text) {
 export function splitSentences(text) {
   if (!text || !text.trim()) return [];
   const protectedText = text
-    .replace(/\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|vs|e\.g|i\.e|etc|Inc|Co|Ltd|U\.S|U\.K)\./g, "$1¤")
+    // Multi-dot abbreviations first, masking EVERY dot (e.g. → e¤g¤); a
+    // single pass left the internal dot unprotected, so "e.g." still split.
+    .replace(/\b(e\.g\.|i\.e\.|U\.S\.|U\.K\.)/g, (m) => m.replace(/\./g, "¤"))
+    .replace(/\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|vs|etc|Inc|Co|Ltd)\./g, "$1¤")
     .replace(/(\d)\.(\d)/g, "$1¤$2");
   const parts = protectedText.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [text];
   return parts
