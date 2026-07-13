@@ -2738,6 +2738,87 @@ li::before {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+/* ── Scorecard actions (practice weak areas / copy) ─────────────────────── */
+.sim-summary-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sim-practice-weak-btn {
+  background: var(--g-violet);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 11px 22px;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.22s var(--e-smooth);
+  box-shadow: 0 4px 14px rgba(124, 31, 255, 0.35);
+}
+.sim-practice-weak-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(124, 31, 255, 0.5); }
+.sim-copy-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 12px;
+  padding: 11px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.22s var(--e-smooth);
+}
+.sim-copy-btn:hover { border-color: var(--v-500); color: var(--v-200); }
+
+/* ── Past mocks list (setup screen) ─────────────────────────────────────── */
+.iv-history { margin-bottom: 22px; }
+.iv-history-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--v-300);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-bottom: 10px;
+}
+.iv-history-list { display: flex; flex-direction: column; gap: 7px; }
+.iv-history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--g-card);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 10px 14px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.iv-history-emoji { font-size: 17px; flex-shrink: 0; }
+.iv-history-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.iv-history-role {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.iv-history-meta { font-size: 11px; color: var(--text-dim); }
+.iv-history-trend {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  flex-shrink: 0;
+}
+.iv-history-trend.up   { color: #4be5b3; background: rgba(34, 229, 151, 0.10); border: 1px solid rgba(34, 229, 151, 0.25); }
+.iv-history-trend.down { color: #ff8aa0; background: rgba(255, 77, 109, 0.10); border: 1px solid rgba(255, 77, 109, 0.25); }
+.iv-history-score {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  flex-shrink: 0;
+}
+
 .sim-summary-heading {
   margin-bottom: 14px;
   font-size: 17px;

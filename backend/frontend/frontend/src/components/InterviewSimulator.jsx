@@ -6,6 +6,14 @@ import {
   SILENCE_BY_MODE,
   TTS_SPEED_BY_MODE,
 } from "../lib/interviewConfig";
+import {
+  loadInterviewHistory,
+  saveInterviewToHistory,
+  trendForEntry,
+  interviewScoreColor,
+  summaryToText,
+  transcriptToText,
+} from "../lib/interviewHistory";
 
 const API = "https://landtherole-ai.onrender.com";
 
@@ -109,6 +117,11 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const [activeSentence, setActiveSentence] = useState(-1); // index of sentence currently being spoken
   const [canInterrupt, setCanInterrupt]   = useState(false);
   const [typedAnswer, setTypedAnswer]     = useState("");
+
+  // Progress: past mocks + optional "drill my weak areas" focus for this run.
+  // focusRef (not state) because startInterview reads it synchronously after set.
+  const [pastMocks, setPastMocks]         = useState(loadInterviewHistory);
+  const focusRef                          = useRef("");
 
   // Refs
   const audioRef           = useRef(null);
@@ -380,7 +393,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
         body: JSON.stringify({
           mode,
           history: newHistory,
-          jd,
+          jd: focusRef.current ? `${jd}\n\n[COACH NOTE] The candidate previously struggled with: ${focusRef.current}. Weight your questions toward probing these areas.` : jd,
           resume,
           target_role: targetRole,
           target_company: targetCompany,
@@ -476,7 +489,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
         body: JSON.stringify({
           mode,
           history: [],
-          jd,
+          jd: focusRef.current ? `${jd}\n\n[COACH NOTE] The candidate previously struggled with: ${focusRef.current}. Weight your questions toward probing these areas.` : jd,
           resume,
           target_role: targetRole,
           target_company: targetCompany,
@@ -535,6 +548,26 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       const data = await res.json();
       setSummary(data);
       setPhase("summary");
+
+      // Persist this mock's scorecard for the progress view on the setup screen.
+      if (typeof data.overall_score === "number") {
+        const updated = saveInterviewToHistory({
+          id:      Date.now(),
+          date:    new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          mode,
+          role:    targetRole || "",
+          company: targetCompany || "",
+          overall: data.overall_score,
+          scores: {
+            communication:   data.communication_score,
+            technical_depth: data.technical_depth_score,
+            confidence:      data.confidence_score,
+            structure:       data.structure_score,
+          },
+          weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses.slice(0, 3) : [],
+        });
+        setPastMocks(updated);
+      }
     } catch (e) {
       setError(e.message || "Couldn't generate summary.");
       setPhase("ended");
@@ -563,9 +596,26 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 
   // ── RENDER ───────────────────────────────────────────────────────────────
   if (phase === "summary" && summary) {
-    return <InterviewSummary data={summary} onRestart={() => {
-      setSummary(null); setHistory([]); setPhase("setup");
-    }} />;
+    return (
+      <InterviewSummary
+        data={summary}
+        transcript={history}
+        role={targetRole}
+        company={targetCompany}
+        onRestart={() => {
+          focusRef.current = "";
+          setSummary(null); setHistory([]); setPhase("setup");
+        }}
+        onPracticeWeak={(weaknesses) => {
+          // Drill the weak areas: inject them as a coach note into the next
+          // run's JD context and start immediately.
+          focusRef.current = (weaknesses || []).join("; ");
+          setSummary(null);
+          setHistory([]);
+          startInterview();
+        }}
+      />
+    );
   }
 
   if (phase === "setup") {
@@ -574,6 +624,36 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
         {prefillTitle && (
           <div className="prefill-banner">
             Mocking: <strong>{prefillTitle}</strong>{prefillCompany ? ` at ${prefillCompany}` : ""}
+          </div>
+        )}
+
+        {/* Past mocks — progress at a glance */}
+        {pastMocks.length > 0 && (
+          <div className="iv-history">
+            <div className="iv-history-title">Your past mocks</div>
+            <div className="iv-history-list">
+              {pastMocks.slice(0, 5).map((m, i) => {
+                const trend = trendForEntry(pastMocks, i);
+                const modeMeta = MODES.find(x => x.id === m.mode);
+                return (
+                  <div key={m.id} className="iv-history-item">
+                    <span className="iv-history-emoji">{modeMeta?.emoji || "🎙️"}</span>
+                    <div className="iv-history-info">
+                      <span className="iv-history-role">{m.role || modeMeta?.label || "Mock interview"}</span>
+                      <span className="iv-history-meta">{m.date}{m.company ? ` · ${m.company}` : ""}</span>
+                    </div>
+                    {trend !== null && trend !== 0 && (
+                      <span className={`iv-history-trend ${trend > 0 ? "up" : "down"}`}>
+                        {trend > 0 ? "▲" : "▼"}{Math.abs(trend)}
+                      </span>
+                    )}
+                    <span className="iv-history-score" style={{ color: interviewScoreColor(m.overall) }}>
+                      {m.overall}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -777,7 +857,8 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 // SUMMARY CARD
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InterviewSummary({ data, onRestart }) {
+function InterviewSummary({ data, transcript = [], role = "", company = "", onRestart, onPracticeWeak }) {
+  const [copied, setCopied] = useState(null); // "summary" | "transcript" | null
   const scores = [
     { label: "Overall",       value: data.overall_score },
     { label: "Communication", value: data.communication_score },
@@ -788,11 +869,38 @@ function InterviewSummary({ data, onRestart }) {
 
   const color = (v) => v >= 80 ? "#22e597" : v >= 60 ? "#c084fc" : v >= 40 ? "#ffce47" : "#ff4d6d";
 
+  const copy = (kind) => {
+    const text = kind === "summary"
+      ? summaryToText(data, { role, company })
+      : transcriptToText(transcript);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    }).catch(() => {});
+  };
+
   return (
     <div className="interview-sim-summary">
       <div className="interview-sim-summary-header">
         <h2>Your Interview Scorecard</h2>
         <button className="reset-btn" onClick={onRestart}>← New Mock</button>
+      </div>
+
+      {/* Actions — practice weaknesses + take your results with you */}
+      <div className="sim-summary-actions">
+        {data.weaknesses?.length > 0 && onPracticeWeak && (
+          <button className="sim-practice-weak-btn" onClick={() => onPracticeWeak(data.weaknesses)}>
+            🎯 Practice my weak areas
+          </button>
+        )}
+        <button className="sim-copy-btn" onClick={() => copy("summary")}>
+          {copied === "summary" ? "✓ Copied" : "📋 Copy summary"}
+        </button>
+        {transcript.length > 0 && (
+          <button className="sim-copy-btn" onClick={() => copy("transcript")}>
+            {copied === "transcript" ? "✓ Copied" : "📝 Copy transcript"}
+          </button>
+        )}
       </div>
 
       <div className="sim-score-grid">
