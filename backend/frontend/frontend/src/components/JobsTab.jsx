@@ -8,6 +8,7 @@ import { roundedCount, isJobNew } from "../lib/format";
 import { expandSearchQuery } from "../lib/search";
 import { getSource, formatEmploymentType } from "../lib/jobMeta";
 import { getResumeKeywords, matchScore } from "../lib/resumeMatch";
+import { INDUSTRY_COLORS, EXP_COLORS } from "../lib/badgeColors";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -26,33 +27,6 @@ import {
 import { POPULAR_LOCATIONS } from "../data/locations";
 
 const API = "https://landtherole-ai.onrender.com";
-
-// ── industry colors (kept compatible with backend's 15 industries) ───────────
-const INDUSTRY_COLORS = {
-  "Technology":          "#7c3aff",
-  "Healthcare":          "#22e597",
-  "Education":           "#ff9f0a",
-  "Finance":             "#60a5fa",
-  "Legal":               "#ffce47",
-  "Marketing":           "#ff5d8f",
-  "Sales":               "#ff7a59",
-  "Design & Creative":   "#d946ef",
-  "Human Resources":     "#a78bfa",
-  "Supply Chain":        "#fbbf24",
-  "Engineering":         "#9ca3af",
-  "Government":          "#64d2ff",
-  "Research & Science":  "#34d399",
-  "Retail & Hospitality":"#fb7185",
-  "Business":            "#c084fc",
-  "Other":               "#94a3b8",
-};
-
-const EXP_COLORS = {
-  "Entry Level": "#22e597",
-  "Mid Level":   "#60a5fa",
-  "Senior":      "#ff9f0a",
-  "Executive":   "#ffce47",
-};
 
 const CACHE_KEY = "nexume_jobs_cache_v2";
 const CACHE_TTL = 5 * 60 * 1000;
