@@ -1,9 +1,13 @@
-import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import useSavedJobs from "../hooks/useSavedJobs";
 import JobsStatusBar from "./JobsStatusBar";
+import CompanyAvatar from "./CompanyAvatar";
+import SkeletonJobCard from "./SkeletonJobCard";
 import { filterJobsForRole, filterJobsForMajor, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
 import { roundedCount, isJobNew } from "../lib/format";
 import { expandSearchQuery } from "../lib/search";
+import { getSource, formatEmploymentType } from "../lib/jobMeta";
+import { getResumeKeywords, matchScore } from "../lib/resumeMatch";
 import {
   SECTORS,
   SECTORS_BY_CATEGORY,
@@ -52,93 +56,6 @@ const EXP_COLORS = {
 
 const CACHE_KEY = "nexume_jobs_cache_v2";
 const CACHE_TTL = 5 * 60 * 1000;
-
-function getSource(url) {
-  try {
-    const host = new URL(url).hostname.replace("www.", "");
-    const known = {
-      "linkedin.com":"LinkedIn","indeed.com":"Indeed","glassdoor.com":"Glassdoor",
-      "ziprecruiter.com":"ZipRecruiter","monster.com":"Monster","dice.com":"Dice",
-      "greenhouse.io":"Greenhouse","lever.co":"Lever","workday.com":"Workday",
-      "myworkdayjobs.com":"Workday","icims.com":"iCIMS","smartrecruiters.com":"SmartRecruiters",
-      "careers.google.com":"Google","jobs.apple.com":"Apple","amazon.jobs":"Amazon","microsoft.com":"Microsoft",
-    };
-    return known[host] || host;
-  } catch { return "Job Board"; }
-}
-
-function formatEmploymentType(t) {
-  if (!t) return null;
-  return { FULLTIME:"Full-time", PARTTIME:"Part-time", CONTRACTOR:"Contract", INTERN:"Internship" }[t.toUpperCase()] || t;
-}
-
-const SkeletonJobCard = memo(function SkeletonJobCard() {
-  return (
-    <div className="li-job-card skeleton-card">
-      <div className="li-card-top">
-        <div className="skeleton-line" style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="skeleton-line" style={{ width: "60%", height: "18px", marginBottom: "8px" }} />
-          <div className="skeleton-line" style={{ width: "40%", height: "13px", marginBottom: "6px" }} />
-          <div className="skeleton-line" style={{ width: "30%", height: "12px" }} />
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-        <div className="skeleton-line" style={{ width: 64, height: 20, borderRadius: 6 }} />
-        <div className="skeleton-line" style={{ width: 54, height: 20, borderRadius: 6 }} />
-        <div className="skeleton-line" style={{ width: 58, height: 20, borderRadius: 6 }} />
-      </div>
-    </div>
-  );
-});
-
-function CompanyAvatar({ name, size = 48 }) {
-  const initials = name
-    ? name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase()
-    : "?";
-  const hue = name ? [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % 360 : 260;
-  return (
-    <div
-      className="company-avatar"
-      style={{
-        width: size, height: size,
-        background: `linear-gradient(135deg, hsl(${hue},50%,28%) 0%, hsl(${(hue+40)%360},55%,22%) 100%)`,
-        border: `1px solid hsl(${hue},50%,38%)`,
-      }}
-    >
-      <span style={{ color: `hsl(${hue},80%,82%)`, fontSize: size * 0.36, fontWeight: 800, letterSpacing: "-0.04em" }}>
-        {initials}
-      </span>
-    </div>
-  );
-}
-
-// crude resume-keyword match score, 0–100. Pulls latest analyzed resume from localStorage.
-function getResumeKeywords() {
-  try {
-    const history = JSON.parse(localStorage.getItem("ltr_history")) || [];
-    if (!history.length) return null;
-    const latest = history[0].result;
-    const kws = new Set();
-    if (Array.isArray(latest?.matched_skills)) latest.matched_skills.forEach(k => kws.add(k.toLowerCase()));
-    if (Array.isArray(latest?.jd_match?.matched_keywords)) latest.jd_match.matched_keywords.forEach(k => kws.add(k.toLowerCase()));
-    if (Array.isArray(latest?.skills)) latest.skills.forEach(k => kws.add(k.toLowerCase()));
-    return kws.size > 0 ? kws : null;
-  } catch { return null; }
-}
-
-function matchScore(job, resumeKeywords) {
-  if (!resumeKeywords) return null;
-  const blob = `${job.title || ""} ${job.description || ""}`.toLowerCase();
-  let hits = 0;
-  let total = 0;
-  for (const kw of resumeKeywords) {
-    total += 1;
-    if (blob.includes(kw)) hits += 1;
-  }
-  if (total === 0) return null;
-  return Math.min(100, Math.round((hits / Math.max(8, total)) * 100));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sector Picker — sticky search filter that opens a categorized popover
