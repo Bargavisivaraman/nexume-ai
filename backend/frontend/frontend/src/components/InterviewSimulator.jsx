@@ -234,13 +234,13 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   // ── Interrupt the AI mid-speech ──────────────────────────────────────────
   const interruptAI = useCallback(() => {
     interruptedRef.current = true;
-    ttsControllersRef.current.forEach(c => { try { c.abort(); } catch {} });
+    ttsControllersRef.current.forEach(c => { try { c.abort(); } catch { /* already aborted */ } });
     ttsControllersRef.current = [];
     if (audioPlayingRef.current) {
-      try { audioPlayingRef.current.pause(); } catch {}
+      try { audioPlayingRef.current.pause(); } catch { /* already stopped */ }
       audioPlayingRef.current = null;
     }
-    try { speechSynthesis.cancel(); } catch {}
+    try { speechSynthesis.cancel(); } catch { /* not speaking */ }
     setCanInterrupt(false);
   }, []);
 
@@ -340,7 +340,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = setTimeout(() => {
         if (utterance.length >= 2) {
-          try { rec.stop(); } catch {}
+          try { rec.stop(); } catch { /* recognizer already stopped */ }
           handleUserSpoke(utterance);
         }
       }, adjustedSilence);
@@ -370,7 +370,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const stopListening = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch {}
+      try { recognitionRef.current.stop(); } catch { /* already stopped */ }
       recognitionRef.current = null;
     }
   }, []);
@@ -447,15 +447,15 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     const text = typedAnswer.trim();
     if (text.length < 2) return;
     stopListening();
-    try { await stopRecording(); } catch {} // discard audio
+    try { await stopRecording(); } catch { /* nothing recording */ } // discard audio
     await sendAnswer(text);
   }, [typedAnswer, stopListening, stopRecording, sendAnswer]);
 
   // Re-record: scrap the current answer capture and start this turn over.
   const reRecord = useCallback(async () => {
-    try { await stopRecording(); } catch {}
+    try { await stopRecording(); } catch { /* nothing recording */ }
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; }
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch { /* already stopped */ } recognitionRef.current = null; }
     lastFinalRef.current = "";
     setInterim("");
     setTypedAnswer("");
@@ -513,7 +513,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 
   // Release the mic stream + recorder (called when the interview ends/unmounts)
   const releaseMic = useCallback(() => {
-    try { mediaRecorderRef.current?.state !== "inactive" && mediaRecorderRef.current?.stop(); } catch {}
+    try { mediaRecorderRef.current?.state !== "inactive" && mediaRecorderRef.current?.stop(); } catch { /* best effort */ }
     mediaRecorderRef.current = null;
     audioChunksRef.current = [];
     try { mediaStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
@@ -580,7 +580,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       stopListening();
       releaseMic();
       try { audioRef.current?.pause(); } catch {}
-      try { speechSynthesis.cancel(); } catch {}
+      try { speechSynthesis.cancel(); } catch { /* not speaking */ }
     };
   }, [stopListening, releaseMic]);
 
