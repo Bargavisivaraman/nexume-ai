@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import useSavedJobs from "../hooks/useSavedJobs";
 import JobsStatusBar from "./JobsStatusBar";
 import CompanyAvatar from "./CompanyAvatar";
@@ -16,6 +16,7 @@ import { formatEmploymentType } from "../lib/jobMeta";
 import { getResumeKeywords, matchScore } from "../lib/resumeMatch";
 import { INDUSTRY_COLORS, EXP_COLORS } from "../lib/badgeColors";
 import { loadTracker, addJobToTracker, isJobTracked } from "../lib/trackerStore";
+import { makeFetchWithRetry } from "../lib/fetchRetry";
 import { SECTOR_BY_ID } from "../data/sectors";
 import { MAJOR_BY_ID } from "../data/majors";
 
@@ -67,22 +68,8 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
     } catch { /* corrupt cache — ignore */ }
   }, []);
 
-  const fetchWithRetry = async (url, signal, retries = 3) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const res = await fetch(url, { signal });
-        if (res.ok) return res;
-        if (res.status < 500 || attempt === retries) return res;
-        setRetryMsg(`Server warming up… (attempt ${attempt + 1}/${retries})`);
-        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-      } catch (e) {
-        if (e.name === "AbortError") throw e;
-        if (attempt === retries) throw e;
-        setRetryMsg(`Retrying… (attempt ${attempt + 1}/${retries})`);
-        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-      }
-    }
-  };
+  // Stable across renders: setRetryMsg is a stable setState function.
+  const fetchWithRetry = useMemo(() => makeFetchWithRetry({ onRetryMsg: setRetryMsg }), []);
 
   const fetchJobs = useCallback(async (c, kw, pg, f = filters, sectorId = activeSector, majorId = activeMajor, roleId = activeRole) => {
     if (abortRef.current) abortRef.current.abort();
@@ -158,7 +145,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
       setRetryMsg(null);
       setLoading(false);
     }
-  }, [filters, locationQuery, activeSector, activeMajor, activeRole]);
+  }, [filters, locationQuery, activeSector, activeMajor, activeRole, fetchWithRetry]);
 
   // Initial fetch only — fetchJobs/query are intentionally not dependencies
   // eslint-disable-next-line react-hooks/exhaustive-deps
