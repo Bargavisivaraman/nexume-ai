@@ -3,29 +3,21 @@ import useSavedJobs from "../hooks/useSavedJobs";
 import JobsStatusBar from "./JobsStatusBar";
 import CompanyAvatar from "./CompanyAvatar";
 import SkeletonJobCard from "./SkeletonJobCard";
-import { filterJobsForRole, filterJobsForMajor, scoreJobForRole, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
-import { roundedCount, isJobNew } from "../lib/format";
+import SectorPicker from "./SectorPicker";
+import MajorPicker from "./MajorPicker";
+import RolesStrip from "./RolesStrip";
+import PopularLocations from "./PopularLocations";
+import SalaryRange from "./SalaryRange";
+import TrendingStrip from "./TrendingStrip";
+import { filterJobsForRole, filterJobsForMajor, RELEVANCE_THRESHOLD } from "../lib/roleMatcher";
+import { isJobNew } from "../lib/format";
 import { expandSearchQuery } from "../lib/search";
-import { getSource, formatEmploymentType } from "../lib/jobMeta";
+import { formatEmploymentType } from "../lib/jobMeta";
 import { getResumeKeywords, matchScore } from "../lib/resumeMatch";
 import { INDUSTRY_COLORS, EXP_COLORS } from "../lib/badgeColors";
 import { loadTracker, addJobToTracker, isJobTracked } from "../lib/trackerStore";
-import {
-  SECTORS,
-  SECTORS_BY_CATEGORY,
-  SECTOR_CATEGORIES,
-  SECTOR_BY_ID,
-  TRENDING_SECTORS,
-} from "../data/sectors";
-import {
-  MAJORS,
-  MAJORS_BY_CATEGORY,
-  MAJOR_CATEGORIES,
-  MAJOR_BY_ID,
-  TOP_MAJORS,
-  TOTAL_ROLE_COUNT,
-} from "../data/majors";
-import { POPULAR_LOCATIONS } from "../data/locations";
+import { SECTOR_BY_ID } from "../data/sectors";
+import { MAJOR_BY_ID } from "../data/majors";
 
 const API = "https://landtherole-ai.onrender.com";
 
@@ -33,321 +25,10 @@ const CACHE_KEY = "nexume_jobs_cache_v2";
 const CACHE_TTL = 5 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sector Picker — sticky search filter that opens a categorized popover
-// ─────────────────────────────────────────────────────────────────────────────
-function SectorPicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const popRef = useRef(null);
-  const selected = value ? SECTOR_BY_ID[value] : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (popRef.current && !popRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const filtered = query
-    ? SECTORS.filter(s => s.label.toLowerCase().includes(query.toLowerCase()) || s.keywords.some(k => k.includes(query.toLowerCase())))
-    : null;
-
-  return (
-    <div className="sector-picker-wrap" ref={popRef}>
-      <button
-        className={`sector-picker-trigger ${open ? "open" : ""} ${selected ? "has-value" : ""}`}
-        onClick={() => setOpen(v => !v)}
-      >
-        {selected ? (
-          <>
-            <span className="sector-picker-emoji">{selected.emoji}</span>
-            <span className="sector-picker-label">{selected.label}</span>
-            <span className="sector-picker-clear" onClick={(e) => { e.stopPropagation(); onChange(null); }}>×</span>
-          </>
-        ) : (
-          <>
-            <span className="sector-picker-emoji">🎯</span>
-            <span className="sector-picker-label">Pick a sector</span>
-            <span className="sector-picker-count">{SECTORS.length}+</span>
-            <span className="sector-picker-chev">▾</span>
-          </>
-        )}
-      </button>
-
-      {open && (
-        <div className="sector-popover">
-          <input
-            className="sector-popover-search"
-            placeholder="Search 100+ sectors…"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            autoFocus
-          />
-          <div className="sector-popover-body">
-            {filtered ? (
-              <div className="sector-popover-group">
-                <div className="sector-popover-group-label">{filtered.length} match{filtered.length !== 1 ? "es" : ""}</div>
-                <div className="sector-popover-grid">
-                  {filtered.map(s => (
-                    <button
-                      key={s.id}
-                      className={`sector-option ${value === s.id ? "active" : ""}`}
-                      onClick={() => { onChange(s.id); setOpen(false); setQuery(""); }}
-                    >
-                      <span className="sector-emoji">{s.emoji}</span>
-                      <span className="sector-name">{s.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              SECTOR_CATEGORIES.map(cat => (
-                <div key={cat.id} className="sector-popover-group">
-                  <div className="sector-popover-group-label">{cat.emoji} {cat.label}</div>
-                  <div className="sector-popover-grid">
-                    {SECTORS_BY_CATEGORY[cat.id]?.map(s => (
-                      <button
-                        key={s.id}
-                        className={`sector-option ${value === s.id ? "active" : ""}`}
-                        onClick={() => { onChange(s.id); setOpen(false); }}
-                      >
-                        <span className="sector-emoji">{s.emoji}</span>
-                        <span className="sector-name">{s.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Major Picker — opens categorized popover with 50+ majors and 2000+ role tags
-// ─────────────────────────────────────────────────────────────────────────────
-function MajorPicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const popRef = useRef(null);
-  const selected = value ? MAJOR_BY_ID[value] : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (popRef.current && !popRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const filtered = query
-    ? MAJORS.filter(m =>
-        m.label.toLowerCase().includes(query.toLowerCase()) ||
-        m.roles.some(r => r.label.toLowerCase().includes(query.toLowerCase()))
-      )
-    : null;
-
-  return (
-    <div className="sector-picker-wrap major-picker-wrap" ref={popRef}>
-      <button
-        className={`sector-picker-trigger ${open ? "open" : ""} ${selected ? "has-value" : ""}`}
-        onClick={() => setOpen(v => !v)}
-      >
-        {selected ? (
-          <>
-            <span className="sector-picker-emoji">{selected.emoji}</span>
-            <span className="sector-picker-label">{selected.label}</span>
-            <span className="sector-picker-clear" onClick={(e) => { e.stopPropagation(); onChange(null); }}>×</span>
-          </>
-        ) : (
-          <>
-            <span className="sector-picker-emoji">🎓</span>
-            <span className="sector-picker-label">Pick your major</span>
-            <span className="sector-picker-count">{roundedCount(MAJORS.length)} majors · {roundedCount(TOTAL_ROLE_COUNT)} roles</span>
-            <span className="sector-picker-chev">▾</span>
-          </>
-        )}
-      </button>
-
-      {open && (
-        <div className="sector-popover major-popover">
-          <input
-            className="sector-popover-search"
-            placeholder={`Search ${roundedCount(MAJORS.length)} majors or ${roundedCount(TOTAL_ROLE_COUNT)} roles…`}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            autoFocus
-          />
-          <div className="sector-popover-body">
-            {filtered ? (
-              <div className="sector-popover-group">
-                <div className="sector-popover-group-label">{filtered.length} match{filtered.length !== 1 ? "es" : ""}</div>
-                <div className="sector-popover-grid major-popover-grid">
-                  {filtered.map(m => (
-                    <button
-                      key={m.id}
-                      className={`sector-option major-option ${value === m.id ? "active" : ""} ${m.isTop ? "is-top" : ""}`}
-                      onClick={() => { onChange(m.id); setOpen(false); setQuery(""); }}
-                    >
-                      <span className="sector-emoji">{m.emoji}</span>
-                      <span className="sector-name">
-                        {m.label}
-                        <span className="major-option-roles">{roundedCount(m.roles.length)} roles</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              MAJOR_CATEGORIES.map(cat => (
-                <div key={cat.id} className="sector-popover-group">
-                  <div className="sector-popover-group-label">{cat.emoji} {cat.label}</div>
-                  <div className="sector-popover-grid major-popover-grid">
-                    {MAJORS_BY_CATEGORY[cat.id]?.map(m => (
-                      <button
-                        key={m.id}
-                        className={`sector-option major-option ${value === m.id ? "active" : ""} ${m.isTop ? "is-top" : ""}`}
-                        onClick={() => { onChange(m.id); setOpen(false); }}
-                      >
-                        <span className="sector-emoji">{m.emoji}</span>
-                        <span className="sector-name">
-                          {m.label}
-                          <span className="major-option-roles">{roundedCount(m.roles.length)} roles</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Roles Strip — horizontal scrollable chips for roles of the selected major
-// ─────────────────────────────────────────────────────────────────────────────
-function RolesStrip({ majorId, activeRoleId, onPickRole }) {
-  if (!majorId) return null;
-  const major = MAJOR_BY_ID[majorId];
-  if (!major) return null;
-  return (
-    <div className="jobs-roles-strip">
-      <div className="jobs-roles-strip-header">
-        <span className="jobs-roles-strip-label">
-          <span className="jobs-roles-strip-emoji">{major.emoji}</span>
-          <strong>{major.label}</strong>
-          <span className="jobs-roles-strip-count">{roundedCount(major.roles.length)} roles</span>
-        </span>
-      </div>
-      <div className="jobs-roles-strip-pills">
-        {major.roles.map(role => (
-          <button
-            key={role.id}
-            className={`jobs-role-pill ${activeRoleId === role.id ? "active" : ""}`}
-            onClick={() => onPickRole(activeRoleId === role.id ? null : role.id)}
-          >
-            {role.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Popular Locations — chip group for quick location-filter
-// ─────────────────────────────────────────────────────────────────────────────
-function PopularLocations({ activeValue, onPick }) {
-  return (
-    <div className="jobs-filter-section">
-      <span className="jobs-filter-label">Popular USA locations</span>
-      <div className="jobs-popular-locations">
-        {POPULAR_LOCATIONS.map(loc => (
-          <button
-            key={loc.id}
-            className={`jobs-location-pill ${activeValue === loc.value ? "active" : ""} ${loc.remote ? "is-remote" : ""}`}
-            onClick={() => onPick(loc)}
-          >
-            <span className="jobs-location-pill-emoji">{loc.emoji}</span>
-            <span>{loc.label}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Salary Range Slider — dual handle
-// ─────────────────────────────────────────────────────────────────────────────
-function SalaryRange({ value, onChange }) {
-  const [min, max] = value;
-  return (
-    <div className="salary-range-control">
-      <div className="salary-range-header">
-        <span>Salary</span>
-        <span className="salary-range-value">
-          ${(min/1000).toFixed(0)}k <span style={{ opacity: 0.4 }}>–</span> {max >= 400000 ? "400k+" : `$${(max/1000).toFixed(0)}k`}
-        </span>
-      </div>
-      <div className="salary-range-track">
-        <input
-          type="range" min={0} max={400000} step={5000}
-          value={min}
-          onChange={e => onChange([Math.min(+e.target.value, max - 5000), max])}
-          className="salary-range-slider min"
-        />
-        <input
-          type="range" min={0} max={400000} step={5000}
-          value={max}
-          onChange={e => onChange([min, Math.max(+e.target.value, min + 5000)])}
-          className="salary-range-slider max"
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Trending sectors strip
-// ─────────────────────────────────────────────────────────────────────────────
-function TrendingStrip({ onPick, active }) {
-  return (
-    <div className="jobs-trending-strip">
-      <span className="jobs-trending-label">
-        <span className="jobs-trending-emoji">🔥</span> Trending now
-      </span>
-      <div className="jobs-trending-pills">
-        {TRENDING_SECTORS.map(id => {
-          const s = SECTOR_BY_ID[id];
-          if (!s) return null;
-          return (
-            <button
-              key={id}
-              className={`jobs-trending-pill ${active === id ? "active" : ""}`}
-              onClick={() => onPick(active === id ? null : id)}
-            >
-              <span className="jobs-trending-pill-emoji">{s.emoji}</span>
-              <span>{s.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main Jobs Tab
 // ─────────────────────────────────────────────────────────────────────────────
 export default function JobsTab({ onPrepInterview, onCoverLetter }) {
-  const [country, setCountry]             = useState("US");
+  const [country]                         = useState("US");
   const [query, setQuery]                 = useState("");
   // Application-tracker integration: one-click "Track" from any job card
   const [trackerList, setTrackerList]     = useState(loadTracker);
@@ -383,7 +64,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
         setHasMore(cached.hasMore);
         setPage(cached.page);
       }
-    } catch {}
+    } catch { /* corrupt cache — ignore */ }
   }, []);
 
   const fetchWithRetry = async (url, signal, retries = 3) => {
@@ -402,8 +83,6 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
       }
     }
   };
-
-  const sectorIndustry = activeSector ? SECTOR_BY_ID[activeSector]?.dbIndustry : "";
 
   const fetchJobs = useCallback(async (c, kw, pg, f = filters, sectorId = activeSector, majorId = activeMajor, roleId = activeRole) => {
     if (abortRef.current) abortRef.current.abort();
@@ -462,7 +141,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
             jobs: data.jobs || [], hasMore: data.has_more === true,
             page: pg, ts: Date.now(), country: c,
           }));
-        } catch {}
+        } catch { /* storage full — skip caching */ }
       } else {
         setJobs(prev => [...prev, ...(data.jobs || [])]);
       }
@@ -481,7 +160,9 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
     }
   }, [filters, locationQuery, activeSector, activeMajor, activeRole]);
 
-  useEffect(() => { fetchJobs(country, query, 1); /* eslint-disable-next-line */ }, [country]);
+  // Initial fetch only — fetchJobs/query are intentionally not dependencies
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchJobs(country, query, 1); }, [country]);
 
   useEffect(() => {
     if (!query) return;
