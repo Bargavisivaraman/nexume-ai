@@ -101,6 +101,75 @@ class FakeAsyncClient:
         return self._responses
 
 
+# ── LLM endpoint test helpers ────────────────────────────────────────────────
+# The endpoints call the module-global main.openai_client; tests swap it for a
+# fake returning a canned completion. Each test uses a unique client IP so the
+# per-IP rate-limit buckets never bleed between tests.
+
+class _FakeCompletionMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeCompletionMessage(content)
+
+
+class _FakeCompletion:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+
+
+class FakeOpenAI:
+    """Stands in for main.openai_client. chat.completions.create returns the
+    canned content; pass an Exception instance to raise it instead."""
+
+    def __init__(self, content):
+        self._content = content
+        outer = self
+
+        class _Completions:
+            def create(self, **kwargs):
+                if isinstance(outer._content, Exception):
+                    raise outer._content
+                return _FakeCompletion(outer._content)
+
+        class _Chat:
+            completions = _Completions()
+
+        self.chat = _Chat()
+
+
+@pytest.fixture
+def fake_llm(monkeypatch):
+    """fake_llm('{"a": 1}') patches main.openai_client with a canned reply."""
+    import main
+
+    def _patch(content):
+        monkeypatch.setattr(main, "openai_client", FakeOpenAI(content))
+
+    return _patch
+
+
+_ip_counter = {"n": 0}
+
+
+@pytest.fixture
+def api_client():
+    """A TestClient plus per-test-unique client IP headers, so the in-memory
+    per-IP rate limiters never carry state across tests."""
+    from fastapi.testclient import TestClient
+    import main
+
+    _ip_counter["n"] += 1
+    n = _ip_counter["n"]
+    headers = {"x-forwarded-for": f"10.99.{n // 256}.{n % 256}"}
+    client = TestClient(main.app)
+    client.headers.update(headers)
+    return client
+
+
 @pytest.fixture
 def patch_httpx(monkeypatch):
     """Patch main.httpx.AsyncClient to serve the given JSON bodies.
