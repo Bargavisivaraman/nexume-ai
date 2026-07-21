@@ -139,12 +139,15 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-The suite covers the security primitives (PDF upload validation, the
-per-IP rate limiter, client-IP extraction, constant-time token
-comparison, and admin auth) and the ATS aggregators — salary parsing,
-seniority/work-mode detection, tech-stack extraction, and the
-Greenhouse/Lever/Workable adapters (via `httpx.MockTransport`, no
-network). It runs in CI on every backend change.
+The ~180-test suite runs fully offline and covers: the security
+primitives (PDF validation, per-IP rate limiting end to end, admin
+auth), the ATS scoring engine and JD matching, every AI endpoint
+(interview generation/evaluation, the voice interview turn engine,
+cover letters, cold email, skill gap, salary) against a faked OpenAI
+client, the job aggregators and both ingestion pipelines against faked
+HTTP and Supabase, the /jobs listing with its graceful offline
+fallback, and the waitlist's file fallback. It runs in CI on every
+backend change.
 
 ### Frontend
 
