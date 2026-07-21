@@ -101,6 +101,60 @@ class FakeAsyncClient:
         return self._responses
 
 
+# ── Fake Supabase client ─────────────────────────────────────────────────────
+# A chainable recorder: any query-builder method returns the same object and is
+# recorded; .execute() returns the canned rows/count for that table. Configure
+# with FakeSupabase({"jobs": rows}) and inspect .calls for assertions.
+
+class FakeSupabaseQuery:
+    def __init__(self, table_name, rows, count, calls):
+        self._table = table_name
+        self._rows = rows
+        self._count = count
+        self.calls = calls
+
+    def execute(self):
+        return SimpleNamespace(data=self._rows, count=self._count)
+
+    def __getattr__(self, name):
+        def method(*args, **kwargs):
+            self.calls.append((self._table, name, args, kwargs))
+            return self
+        return method
+
+
+class FakeSupabase:
+    def __init__(self, tables=None, counts=None, fail=False):
+        self.tables = tables or {}
+        self.counts = counts or {}
+        self.fail = fail
+        self.calls = []
+
+    def table(self, name):
+        if self.fail:
+            raise RuntimeError("supabase unreachable")
+        rows = self.tables.get(name, [])
+        count = self.counts.get(name, len(rows))
+        return FakeSupabaseQuery(name, rows, count, self.calls)
+
+    def payloads(self, table, method):
+        """All recorded first-args for calls like ('jobs', 'upsert', (rows,), {...})."""
+        return [args[0] for (t, m, args, _k) in self.calls if t == table and m == method and args]
+
+
+@pytest.fixture
+def fake_supabase(monkeypatch):
+    """fake_supabase(tables={...}) patches main.supabase and returns the fake."""
+    import main
+
+    def _patch(tables=None, counts=None, fail=False):
+        fake = FakeSupabase(tables=tables, counts=counts, fail=fail)
+        monkeypatch.setattr(main, "supabase", fake)
+        return fake
+
+    return _patch
+
+
 # ── LLM endpoint test helpers ────────────────────────────────────────────────
 # The endpoints call the module-global main.openai_client; tests swap it for a
 # fake returning a canned completion. Each test uses a unique client IP so the
