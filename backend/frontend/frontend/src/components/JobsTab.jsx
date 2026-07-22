@@ -75,7 +75,9 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    if (pg === 1) setJobs([]);
+    // Keep the current (or cached) list visible while fresh results load —
+    // clearing here wiped the sessionStorage cache before it ever painted,
+    // leaving users on skeletons through the whole cold start.
     setLoading(true);
     setError(null);
     setRetryMsg(null);
