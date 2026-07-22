@@ -154,6 +154,24 @@ backend change.
 ```bash
 cd backend/frontend/frontend
 npm install
+```
+
+#### Frontend tests
+
+```bash
+cd backend/frontend/frontend
+npm test              # Vitest + Testing Library (~160 tests)
+npm run test:coverage # with a V8 coverage report
+```
+
+The suite covers the lib layer (search expansion, role matching,
+formatters, retry/backoff, saved-jobs and tracker stores), the data
+taxonomies, and component behavior — the pickers, job cards and saved
+view, pagination, the status bar (including the admin panel), and the
+interview setup and progress screens. It runs in CI on every frontend
+change.
+
+```bash
 
 # Point at your local backend if you want
 # (default points at production: https://landtherole-ai.onrender.com)
