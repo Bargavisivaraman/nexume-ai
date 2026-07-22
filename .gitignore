@@ -70,3 +70,4 @@ yarn-error.log*
 # ────────────────────────────────────────────────────────────────────────────
 .claude/worktrees/
 **/.claude/worktrees/
+backend/frontend/frontend/coverage/
