@@ -176,15 +176,24 @@ class _FakeCompletion:
 
 
 class FakeOpenAI:
-    """Stands in for main.openai_client. chat.completions.create returns the
-    canned content; pass an Exception instance to raise it instead."""
+    """Stands in for main.openai_client.
 
-    def __init__(self, content):
+    chat.completions.create returns the canned content (pass an Exception to
+    raise instead). The audio surfaces return canned speech bytes and a canned
+    transcript; audio_fail_first makes the first transcription model raise so
+    the whisper fallback path can be exercised.
+    """
+
+    def __init__(self, content, *, audio_bytes=b"mp3-bytes", transcript="hello world",
+                 audio_fail_first=False):
         self._content = content
+        self.calls = 0
+        self.transcribe_models = []
         outer = self
 
         class _Completions:
             def create(self, **kwargs):
+                outer.calls += 1
                 if isinstance(outer._content, Exception):
                     raise outer._content
                 return _FakeCompletion(outer._content)
@@ -192,16 +201,35 @@ class FakeOpenAI:
         class _Chat:
             completions = _Completions()
 
+        class _Speech:
+            def create(self, **kwargs):
+                return SimpleNamespace(content=audio_bytes)
+
+        class _Transcriptions:
+            def create(self, model, **kwargs):
+                outer.transcribe_models.append(model)
+                if audio_fail_first and len(outer.transcribe_models) == 1:
+                    raise RuntimeError("model not enabled")
+                return SimpleNamespace(text=transcript)
+
+        class _Audio:
+            speech = _Speech()
+            transcriptions = _Transcriptions()
+
         self.chat = _Chat()
+        self.audio = _Audio()
 
 
 @pytest.fixture
 def fake_llm(monkeypatch):
-    """fake_llm('{"a": 1}') patches main.openai_client with a canned reply."""
+    """fake_llm('{"a": 1}') patches main.openai_client with a canned reply.
+    Returns the FakeOpenAI so tests can assert call counts / models used."""
     import main
 
-    def _patch(content):
-        monkeypatch.setattr(main, "openai_client", FakeOpenAI(content))
+    def _patch(content, **kwargs):
+        fake = FakeOpenAI(content, **kwargs)
+        monkeypatch.setattr(main, "openai_client", fake)
+        return fake
 
     return _patch
 
