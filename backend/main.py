@@ -36,8 +36,49 @@ from security import (
 
 load_dotenv()
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    """
+    Auto-fetch new jobs from public ATS boards:
+      tier1 every 5 min   — ~30 highest-demand companies (Stripe, OpenAI, Spotify, etc.)
+      tier2 every 30 min  — broader 50+ company set
+      tier3 every 6 hours — long-tail companies
+
+    Plus an initial tier1 run 30 seconds after boot so first-load users see
+    fresh data. (scheduler and _scheduled_ats_ingestion are defined later in
+    this module; they exist by the time the app actually starts.)
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", minutes=5,
+        args=["tier1"], id="ats_tier1",
+        next_run_time=_dt.now(timezone.utc) + _td(seconds=30),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", minutes=30,
+        args=["tier2"], id="ats_tier2",
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=2),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.add_job(
+        _scheduled_ats_ingestion, "interval", hours=6,
+        args=["tier3"], id="ats_tier3",
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=10),
+        coalesce=True, max_instances=1,
+    )
+    scheduler.start()
+    print("[Startup] ATS scheduler enabled — tier1=5min, tier2=30min, tier3=6h")
+    yield
+    scheduler.shutdown()
+
+
 app = FastAPI(
     title="Nexume API",
+    lifespan=_lifespan,
     docs_url=None,       # disable /docs in production — info disclosure
     redoc_url=None,      # disable /redoc
     openapi_url=None,    # disable /openapi.json
@@ -522,44 +563,6 @@ async def _scheduled_ats_ingestion(tier: str):
         await run_ats_ingestion(supabase, tier=tier)
     except Exception as e:
         print(f"[Scheduler] ATS tier={tier} failed: {e}")
-
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Auto-fetch new jobs from public ATS boards:
-      tier1 every 5 min   — ~30 highest-demand companies (Stripe, OpenAI, Spotify, etc.)
-      tier2 every 30 min  — broader 50+ company set
-      tier3 every 6 hours — long-tail companies
-
-    Plus an initial tier1 run 30 seconds after boot so first-load users see fresh data.
-    """
-    from datetime import datetime as _dt, timedelta as _td
-    scheduler.add_job(
-        _scheduled_ats_ingestion, "interval", minutes=5,
-        args=["tier1"], id="ats_tier1",
-        next_run_time=_dt.now(timezone.utc) + _td(seconds=30),
-        coalesce=True, max_instances=1,
-    )
-    scheduler.add_job(
-        _scheduled_ats_ingestion, "interval", minutes=30,
-        args=["tier2"], id="ats_tier2",
-        next_run_time=_dt.now(timezone.utc) + _td(minutes=2),
-        coalesce=True, max_instances=1,
-    )
-    scheduler.add_job(
-        _scheduled_ats_ingestion, "interval", hours=6,
-        args=["tier3"], id="ats_tier3",
-        next_run_time=_dt.now(timezone.utc) + _td(minutes=10),
-        coalesce=True, max_instances=1,
-    )
-    scheduler.start()
-    print("[Startup] ATS scheduler enabled — tier1=5min, tier2=30min, tier3=6h")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    scheduler.shutdown()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
