@@ -1,0 +1,961 @@
+import { useEffect, useRef, useState, useCallback } from "react";
+import { isThinkingPause, splitSentences } from "../lib/speech";
+import {
+  MODES,
+  VOICES,
+  SILENCE_BY_MODE,
+  TTS_SPEED_BY_MODE,
+} from "../lib/interviewConfig";
+import {
+  loadInterviewHistory,
+  saveInterviewToHistory,
+  trendForEntry,
+  interviewScoreColor,
+  summaryToText,
+  transcriptToText,
+} from "../lib/interviewHistory";
+
+const API = "https://landtherole-ai.onrender.com";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AVATAR — animated CSS orb that breathes/pulses/listens
+// ─────────────────────────────────────────────────────────────────────────────
+
+function InterviewerOrb({ state }) {
+  // states: speaking | listening | thinking | idle
+  return (
+    <div className={`interview-orb interview-orb-${state}`} aria-hidden="true">
+      <div className="interview-orb-core" />
+      <div className="interview-orb-ring" />
+      <div className="interview-orb-ring interview-orb-ring-2" />
+      <div className="interview-orb-glow" />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InterviewerAvatar — stylized character face that reacts to the interview state.
+//   speaking  → mouth animates (rhythmic lip-sync) + violet glow
+//   listening → attentive, green glow, eyes focused
+//   thinking  → eyes glance up, "hmm" mouth, amber glow
+//   idle/ended→ neutral resting face
+// Pure SVG + CSS so it can never interfere with audio playback.
+// ─────────────────────────────────────────────────────────────────────────────
+function InterviewerAvatar({ state }) {
+  return (
+    <div className={`iv-avatar iv-avatar-${state}`} aria-hidden="true">
+      <div className="iv-avatar-glow" />
+      <svg className="iv-avatar-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="ivHead" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#241147" />
+            <stop offset="1" stopColor="#160a2e" />
+          </linearGradient>
+          <linearGradient id="ivFace" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#c084fc" />
+            <stop offset="1" stopColor="#7c1fff" />
+          </linearGradient>
+        </defs>
+
+        {/* head */}
+        <rect className="iv-head" x="34" y="30" width="132" height="140" rx="44" fill="url(#ivHead)" stroke="rgba(168,85,247,0.5)" strokeWidth="1.5" />
+        {/* little antenna / status dot — reads as an AI/headset cue */}
+        <line x1="100" y1="30" x2="100" y2="16" stroke="rgba(168,85,247,0.6)" strokeWidth="3" strokeLinecap="round" />
+        <circle className="iv-antenna" cx="100" cy="12" r="5" fill="url(#ivFace)" />
+
+        {/* eyes */}
+        <g className="iv-eyes" fill="url(#ivFace)">
+          <ellipse className="iv-eye iv-eye-l" cx="76" cy="92" rx="11" ry="13" />
+          <ellipse className="iv-eye iv-eye-r" cx="124" cy="92" rx="11" ry="13" />
+        </g>
+        {/* eye shine */}
+        <circle cx="79" cy="87" r="3" fill="#fff" opacity="0.85" />
+        <circle cx="127" cy="87" r="3" fill="#fff" opacity="0.85" />
+
+        {/* brows (raise slightly when thinking) */}
+        <g className="iv-brows" stroke="rgba(192,132,252,0.7)" strokeWidth="3.5" strokeLinecap="round">
+          <line className="iv-brow-l" x1="64" y1="72" x2="88" y2="70" />
+          <line className="iv-brow-r" x1="112" y1="70" x2="136" y2="72" />
+        </g>
+
+        {/* mouth — an SVG group we scale/shape per state */}
+        <g className="iv-mouth-wrap">
+          <rect className="iv-mouth" x="80" y="126" width="40" height="10" rx="5" fill="url(#ivFace)" />
+          {/* resting smile curve, shown when not speaking */}
+          <path className="iv-smile" d="M78 128 Q100 142 122 128" fill="none" stroke="url(#ivFace)" strokeWidth="5" strokeLinecap="round" />
+        </g>
+      </svg>
+      {/* audio bars badge — visible while speaking */}
+      <div className="iv-avatar-bars"><span/><span/><span/><span/></div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function InterviewSimulator({ prefillTitle = "", prefillCompany = "" }) {
+  // Setup
+  const [mode, setMode]                 = useState("hr");
+  const [voice, setVoice]               = useState("nova");
+  const [jd, setJd]                     = useState("");
+  const [resume, setResume]             = useState("");
+  const [targetRole, setTargetRole]     = useState(prefillTitle);
+  const [targetCompany, setTargetCompany] = useState(prefillCompany);
+
+  // Conversation
+  const [phase, setPhase]               = useState("setup"); // setup | speaking | listening | thinking | ended | summary
+  const [history, setHistory]           = useState([]);
+  const [interim, setInterim]           = useState("");
+  const [statusMsg, setStatusMsg]       = useState("");
+  const [error, setError]               = useState(null);
+  const [summary, setSummary]           = useState(null);
+
+  // Conversation state for streamed reveal
+  const [aiSentences, setAiSentences]     = useState([]); // sentences of the CURRENT AI turn, revealed as audio plays
+  const [activeSentence, setActiveSentence] = useState(-1); // index of sentence currently being spoken
+  const [canInterrupt, setCanInterrupt]   = useState(false);
+  const [typedAnswer, setTypedAnswer]     = useState("");
+
+  // Progress: past mocks + optional "drill my weak areas" focus for this run.
+  // focusRef (not state) because startInterview reads it synchronously after set.
+  const [pastMocks, setPastMocks]         = useState(loadInterviewHistory);
+  const focusRef                          = useRef("");
+
+  // Refs
+  const audioRef           = useRef(null);
+  const recognitionRef     = useRef(null);
+  const silenceTimerRef    = useRef(null);
+  const lastFinalRef       = useRef("");
+  const phaseRef           = useRef(phase);
+  const historyRef         = useRef(history);
+  // Accurate-STT capture (MediaRecorder → OpenAI transcription)
+  const mediaStreamRef     = useRef(null);   // the getUserMedia stream (kept for the session)
+  const mediaRecorderRef   = useRef(null);
+  const audioChunksRef     = useRef([]);
+  const transcriptEndRef   = useRef(null);
+  // v2 — interrupt + sentence pipelining
+  const interruptedRef     = useRef(false);
+  const ttsControllersRef  = useRef([]);    // AbortController per pending TTS fetch
+  const audioPlayingRef    = useRef(null);  // currently playing <Audio> instance
+
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [history, interim]);
+
+  // ── Browser TTS fallback ─────────────────────────────────────────────────
+  const speakBrowser = useCallback((text) => new Promise((resolve) => {
+    if (!("speechSynthesis" in window)) return resolve();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    u.pitch = 1.0;
+    u.onend = resolve;
+    u.onerror = resolve;
+    // Pick best available English voice
+    const voices = speechSynthesis.getVoices();
+    const preferred = voices.find(v => /samantha|google.*us english|microsoft jenny/i.test(v.name))
+                   || voices.find(v => v.lang.startsWith("en-US"));
+    if (preferred) u.voice = preferred;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }), []);
+
+  // ── OpenAI TTS — single sentence fetch with cancellation ────────────────
+  const fetchTTS = useCallback(async (text, controller) => {
+    const ttsSpeed = TTS_SPEED_BY_MODE[mode] || 1.0;
+    const res = await fetch(`${API}/interview-tts/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice, speed: ttsSpeed }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }, [voice, mode]);
+
+  // ── Speak with sentence pipelining ───────────────────────────────────────
+  // Splits the AI's response into sentences, kicks off all TTS fetches in
+  // parallel, then plays them sequentially. First word reaches the user's ear
+  // in ~0.5-0.8s (vs ~2.5s when waiting for the full response's audio).
+  // Honors interrupt: if interruptedRef flips true mid-stream, stops cleanly.
+  const speak = useCallback(async (text) => {
+    interruptedRef.current = false;
+    setStatusMsg("Interviewer speaking…");
+    setPhase("speaking");
+    setCanInterrupt(true);
+
+    if (voice === "browser") {
+      await speakBrowser(text);
+      setCanInterrupt(false);
+      return;
+    }
+
+    const sentences = splitSentences(text);
+    if (sentences.length === 0) { setCanInterrupt(false); return; }
+
+    setAiSentences(sentences);
+    setActiveSentence(-1);
+
+    // Kick off all fetches in parallel — browser caps concurrent connections
+    // (~6 to one host), so very long responses self-throttle gracefully.
+    ttsControllersRef.current = sentences.map(() => new AbortController());
+    const audioPromises = sentences.map((s, i) =>
+      fetchTTS(s, ttsControllersRef.current[i]).catch((e) => {
+        if (e.name !== "AbortError") console.warn(`[TTS sentence ${i}]`, e);
+        return null;
+      })
+    );
+
+    // Play sequentially while fetches race ahead
+    for (let i = 0; i < sentences.length; i++) {
+      if (interruptedRef.current) break;
+      setActiveSentence(i);
+      const url = await audioPromises[i];
+      if (interruptedRef.current) { if (url) URL.revokeObjectURL(url); continue; }
+      if (!url) continue;
+      await new Promise((resolve) => {
+        const audio = new Audio(url);
+        audioPlayingRef.current = audio;
+        audioRef.current = audio;
+        audio.onended  = () => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
+        audio.onerror  = ()   => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    }
+
+    // Cleanup any still-pending TTS URLs
+    audioPromises.forEach(p => p.then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {}));
+    setCanInterrupt(false);
+    setActiveSentence(-1);
+  }, [voice, speakBrowser, fetchTTS]);
+
+  // ── Interrupt the AI mid-speech ──────────────────────────────────────────
+  const interruptAI = useCallback(() => {
+    interruptedRef.current = true;
+    ttsControllersRef.current.forEach(c => { try { c.abort(); } catch { /* already aborted */ } });
+    ttsControllersRef.current = [];
+    if (audioPlayingRef.current) {
+      try { audioPlayingRef.current.pause(); } catch { /* already stopped */ }
+      audioPlayingRef.current = null;
+    }
+    try { speechSynthesis.cancel(); } catch { /* not speaking */ }
+    setCanInterrupt(false);
+  }, []);
+
+  // ── Speech-to-text (browser native) ──────────────────────────────────────
+  // ── Accurate STT: record audio in parallel, transcribe via OpenAI ──────────
+  // Browser SpeechRecognition is used only for live captions + detecting WHEN
+  // the candidate stops talking. The actual answer text comes from OpenAI
+  // transcription of the recorded audio — far more accurate for technical
+  // terms and accents. Falls back to the browser transcript on any failure.
+  const startRecording = useCallback(() => {
+    try {
+      const stream = mediaStreamRef.current;
+      if (!stream || typeof MediaRecorder === "undefined") return;
+      // Pick a mime type the browser + OpenAI both accept
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
+        .find(m => MediaRecorder.isTypeSupported?.(m)) || "";
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
+      rec.start();
+      mediaRecorderRef.current = rec;
+    } catch (e) {
+      console.warn("[MediaRecorder start]", e);
+    }
+  }, []);
+
+  // Stop recording and resolve with a Blob of everything captured this turn.
+  const stopRecording = useCallback(() => new Promise((resolve) => {
+    const rec = mediaRecorderRef.current;
+    if (!rec || rec.state === "inactive") { resolve(null); return; }
+    rec.onstop = () => {
+      const type = rec.mimeType || "audio/webm";
+      const blob = audioChunksRef.current.length ? new Blob(audioChunksRef.current, { type }) : null;
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      resolve(blob);
+    };
+    try { rec.stop(); } catch { resolve(null); }
+  }), []);
+
+  // Upload audio → accurate transcript. Returns null on any failure.
+  const transcribeAudio = useCallback(async (blob) => {
+    if (!blob || blob.size < 1200) return null; // too small to be real speech
+    try {
+      const ext = (blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm");
+      const fd = new FormData();
+      fd.append("audio", blob, `answer.${ext}`);
+      const res = await fetch(`${API}/transcribe/`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(`transcribe ${res.status}`);
+      const data = await res.json();
+      const text = (data.text || "").trim();
+      return text.length >= 2 ? text : null;
+    } catch (e) {
+      console.warn("[transcribe] falling back to browser STT:", e);
+      return null;
+    }
+  }, []);
+
+  const startListening = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setError("Voice recognition isn't supported in this browser. Use Chrome.");
+      setPhase("setup");
+      return;
+    }
+    setStatusMsg("Listening — start speaking…");
+    setPhase("listening");
+    setInterim("");
+    lastFinalRef.current = "";
+    startRecording(); // capture accurate audio alongside the browser recognizer
+
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+
+    rec.onresult = (event) => {
+      let interimStr = "";
+      let finalStr = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalStr += t + " ";
+        else                          interimStr += t;
+      }
+      if (finalStr) {
+        lastFinalRef.current += finalStr;
+      }
+      setInterim(interimStr || lastFinalRef.current);
+
+      // Mode-aware silence threshold. If the tail of what the user just said
+      // looks like a filler ("um", "let me think", "so…"), extend the timer
+      // significantly — they're still forming the thought.
+      const utterance = (lastFinalRef.current + " " + interimStr).trim();
+      const baseSilence = SILENCE_BY_MODE[mode] || 2500;
+      const adjustedSilence = isThinkingPause(utterance) ? Math.round(baseSilence * 1.8) : baseSilence;
+
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        if (utterance.length >= 2) {
+          try { rec.stop(); } catch { /* recognizer already stopped */ }
+          handleUserSpoke(utterance);
+        }
+      }, adjustedSilence);
+    };
+
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed") {
+        setError("Microphone permission denied. Allow mic access and reload.");
+        setPhase("setup");
+      } else if (e.error !== "no-speech" && e.error !== "aborted") {
+        console.warn("[SR error]", e.error);
+      }
+    };
+
+    rec.onend = () => {
+      // If we stopped without capturing anything (no-speech), give a nudge
+      if (phaseRef.current === "listening" && !lastFinalRef.current.trim()) {
+        setStatusMsg("Didn't hear anything — try again or type below");
+      }
+    };
+
+    recognitionRef.current = rec;
+    try { rec.start(); }
+    catch (e) { console.warn("[SR start]", e); }
+  }, [mode, startRecording]); // re-create when mode changes so silence threshold updates
+
+  const stopListening = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* already stopped */ }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  // ── Turn handler ─────────────────────────────────────────────────────────
+  // Core: given the candidate's final answer text, append it, get the AI's
+  // reply, speak it, and continue the loop. Shared by voice + typed answers.
+  const sendAnswer = useCallback(async (finalText) => {
+    const newHistory = [...historyRef.current, { role: "user", content: finalText }];
+    setHistory(newHistory);
+    setInterim("");
+    setTypedAnswer("");
+    setPhase("thinking");
+    setStatusMsg("Thinking…");
+
+    try {
+      const res = await fetch(`${API}/interview-turn/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          history: newHistory,
+          jd: focusRef.current ? `${jd}\n\n[COACH NOTE] The candidate previously struggled with: ${focusRef.current}. Weight your questions toward probing these areas.` : jd,
+          resume,
+          target_role: targetRole,
+          target_company: targetCompany,
+          is_start: false,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Server error ${res.status}`);
+      }
+      const data = await res.json();
+      const aiText = data.message || "Could you tell me more?";
+      const withAi = [...newHistory, { role: "ai", content: aiText }];
+      setHistory(withAi);
+      await speak(aiText);
+
+      if (data.should_end) {
+        endInterview(withAi);
+      } else {
+        startListening();
+      }
+    } catch (e) {
+      setError(e.message || "Conversation interrupted.");
+      setPhase("ended");
+    }
+    // endInterview is referenced via closure (declared later); intentionally
+    // omitted from deps to avoid a temporal-dead-zone reference.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening]);
+
+  // Voice answer: stop capture, transcribe the recorded audio for accuracy,
+  // fall back to the browser transcript, then send.
+  const handleUserSpoke = useCallback(async (text) => {
+    stopListening();
+    setPhase("thinking");
+    setStatusMsg("Transcribing…");
+    let finalText = text;
+    try {
+      const blob = await stopRecording();
+      const accurate = await transcribeAudio(blob);
+      if (accurate) finalText = accurate;
+    } catch (e) {
+      console.warn("[handleUserSpoke] transcription error, using browser text", e);
+    }
+    await sendAnswer(finalText);
+  }, [stopListening, stopRecording, transcribeAudio, sendAnswer]);
+
+  // Typed answer: skip transcription entirely (they typed, didn't speak).
+  // Discard any recorded audio for this turn.
+  const handleTypedAnswer = useCallback(async () => {
+    const text = typedAnswer.trim();
+    if (text.length < 2) return;
+    stopListening();
+    try { await stopRecording(); } catch { /* nothing recording */ } // discard audio
+    await sendAnswer(text);
+  }, [typedAnswer, stopListening, stopRecording, sendAnswer]);
+
+  // Re-record: scrap the current answer capture and start this turn over.
+  const reRecord = useCallback(async () => {
+    try { await stopRecording(); } catch { /* nothing recording */ }
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch { /* already stopped */ } recognitionRef.current = null; }
+    lastFinalRef.current = "";
+    setInterim("");
+    setTypedAnswer("");
+    startListening();
+  }, [stopRecording, startListening]);
+
+  // ── Start / End ──────────────────────────────────────────────────────────
+  const startInterview = useCallback(async () => {
+    setError(null);
+    setHistory([]);
+    setSummary(null);
+    setPhase("thinking");
+    setStatusMsg("Preparing your interviewer…");
+
+    // Acquire one mic stream up front for MediaRecorder (accurate STT). The
+    // browser SpeechRecognition grabs its own; this is a second, explicit tap
+    // used only to record audio we send to OpenAI. Non-fatal if it fails —
+    // we just fall back to browser-only transcripts.
+    try {
+      if (!mediaStreamRef.current && navigator.mediaDevices?.getUserMedia) {
+        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    } catch (e) {
+      console.warn("[getUserMedia] accurate STT disabled, using browser only:", e);
+    }
+
+    try {
+      const res = await fetch(`${API}/interview-turn/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          history: [],
+          jd: focusRef.current ? `${jd}\n\n[COACH NOTE] The candidate previously struggled with: ${focusRef.current}. Weight your questions toward probing these areas.` : jd,
+          resume,
+          target_role: targetRole,
+          target_company: targetCompany,
+          is_start: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Server error ${res.status}`);
+      }
+      const data = await res.json();
+      const aiText = data.message || "Hi! Let's get started — could you walk me through your background?";
+      setHistory([{ role: "ai", content: aiText }]);
+      await speak(aiText);
+      startListening();
+    } catch (e) {
+      setError(e.message || "Couldn't start the interview. Try again.");
+      setPhase("setup");
+    }
+  }, [mode, jd, resume, targetRole, targetCompany, speak, startListening]);
+
+  // Release the mic stream + recorder (called when the interview ends/unmounts)
+  const releaseMic = useCallback(() => {
+    try { mediaRecorderRef.current?.state !== "inactive" && mediaRecorderRef.current?.stop(); } catch { /* best effort */ }
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    try { mediaStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    mediaStreamRef.current = null;
+  }, []);
+
+  const endInterview = useCallback(async (finalHistory) => {
+    stopListening();
+    releaseMic();
+    try { audioRef.current?.pause(); } catch {}
+    setPhase("ended");
+    setStatusMsg("Scoring your interview…");
+
+    const h = finalHistory || historyRef.current;
+    if (h.filter(x => x.role === "user").length === 0) {
+      setPhase("setup");
+      setError("No answers recorded — interview not scored.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API}/interview-summary/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode, history: h,
+          target_role: targetRole,
+          target_company: targetCompany,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      setSummary(data);
+      setPhase("summary");
+
+      // Persist this mock's scorecard for the progress view on the setup screen.
+      if (typeof data.overall_score === "number") {
+        const updated = saveInterviewToHistory({
+          id:      Date.now(),
+          date:    new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          mode,
+          role:    targetRole || "",
+          company: targetCompany || "",
+          overall: data.overall_score,
+          scores: {
+            communication:   data.communication_score,
+            technical_depth: data.technical_depth_score,
+            confidence:      data.confidence_score,
+            structure:       data.structure_score,
+          },
+          weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses.slice(0, 3) : [],
+        });
+        setPastMocks(updated);
+      }
+    } catch (e) {
+      setError(e.message || "Couldn't generate summary.");
+      setPhase("ended");
+    }
+  }, [mode, targetRole, targetCompany, stopListening, releaseMic]);
+
+  // ── Cleanup ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      stopListening();
+      releaseMic();
+      try { audioRef.current?.pause(); } catch {}
+      try { speechSynthesis.cancel(); } catch { /* not speaking */ }
+    };
+  }, [stopListening, releaseMic]);
+
+  // Force voices to load (some browsers lazy-load)
+  useEffect(() => {
+    if ("speechSynthesis" in window) {
+      speechSynthesis.getVoices();
+      const onVoices = () => speechSynthesis.getVoices();
+      speechSynthesis.addEventListener?.("voiceschanged", onVoices);
+      return () => speechSynthesis.removeEventListener?.("voiceschanged", onVoices);
+    }
+  }, []);
+
+  // ── RENDER ───────────────────────────────────────────────────────────────
+  if (phase === "summary" && summary) {
+    return (
+      <InterviewSummary
+        data={summary}
+        transcript={history}
+        role={targetRole}
+        company={targetCompany}
+        onRestart={() => {
+          focusRef.current = "";
+          setSummary(null); setHistory([]); setPhase("setup");
+        }}
+        onPracticeWeak={(weaknesses) => {
+          // Drill the weak areas: inject them as a coach note into the next
+          // run's JD context and start immediately.
+          focusRef.current = (weaknesses || []).join("; ");
+          setSummary(null);
+          setHistory([]);
+          startInterview();
+        }}
+      />
+    );
+  }
+
+  if (phase === "setup") {
+    return (
+      <div className="interview-sim-setup">
+        {prefillTitle && (
+          <div className="prefill-banner">
+            Mocking: <strong>{prefillTitle}</strong>{prefillCompany ? ` at ${prefillCompany}` : ""}
+          </div>
+        )}
+
+        {/* Past mocks — progress at a glance */}
+        {pastMocks.length > 0 && (
+          <div className="iv-history">
+            <div className="iv-history-title">Your past mocks</div>
+            <div className="iv-history-list">
+              {pastMocks.slice(0, 5).map((m, i) => {
+                const trend = trendForEntry(pastMocks, i);
+                const modeMeta = MODES.find(x => x.id === m.mode);
+                return (
+                  <div key={m.id} className="iv-history-item">
+                    <span className="iv-history-emoji">{modeMeta?.emoji || "🎙️"}</span>
+                    <div className="iv-history-info">
+                      <span className="iv-history-role">{m.role || modeMeta?.label || "Mock interview"}</span>
+                      <span className="iv-history-meta">{m.date}{m.company ? ` · ${m.company}` : ""}</span>
+                    </div>
+                    {trend !== null && trend !== 0 && (
+                      <span className={`iv-history-trend ${trend > 0 ? "up" : "down"}`}>
+                        {trend > 0 ? "▲" : "▼"}{Math.abs(trend)}
+                      </span>
+                    )}
+                    <span className="iv-history-score" style={{ color: interviewScoreColor(m.overall) }}>
+                      {m.overall}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <label className="field-label">Interview Mode</label>
+        <div className="sim-mode-grid">
+          {MODES.map(m => (
+            <button
+              key={m.id}
+              className={`sim-mode-card ${mode === m.id ? "active" : ""}`}
+              onClick={() => setMode(m.id)}
+            >
+              <span className="sim-mode-emoji">{m.emoji}</span>
+              <span className="sim-mode-label">{m.label}</span>
+              <span className="sim-mode-desc">{m.desc}</span>
+            </button>
+          ))}
+        </div>
+
+        <label className="field-label">Interviewer Voice</label>
+        <div className="sim-voice-row">
+          {VOICES.map(v => (
+            <button
+              key={v.id}
+              className={`sim-voice-pill ${voice === v.id ? "active" : ""}`}
+              onClick={() => setVoice(v.id)}
+              title={v.desc}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+          <div>
+            <label className="field-label">Target Role</label>
+            <input
+              className="sm-input"
+              placeholder="e.g. Senior Frontend Engineer"
+              value={targetRole}
+              onChange={e => setTargetRole(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="field-label">Target Company (optional)</label>
+            <input
+              className="sm-input"
+              placeholder="e.g. Stripe"
+              value={targetCompany}
+              onChange={e => setTargetCompany(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <label className="field-label">Job Description (optional)</label>
+        <textarea
+          className="interview-textarea"
+          rows={5}
+          placeholder="Paste the JD for sharper, role-specific questions…"
+          value={jd}
+          onChange={e => setJd(e.target.value)}
+        />
+
+        <label className="field-label">Your Resume (optional)</label>
+        <textarea
+          className="interview-textarea"
+          rows={4}
+          placeholder="Paste your resume so the interviewer probes your actual experience…"
+          value={resume}
+          onChange={e => setResume(e.target.value)}
+        />
+
+        {error && <p className="error-msg" style={{ marginTop: 12 }}>{error}</p>}
+
+        <button className="analyze-btn" style={{ marginTop: 22 }} onClick={startInterview}>
+          🎙️ Start Live Mock Interview
+        </button>
+        <p className="sim-disclaimer">
+          Chrome recommended · Microphone permission required · Conversation stays on your device + our servers (not stored)
+        </p>
+      </div>
+    );
+  }
+
+  // Active interview view
+  return (
+    <div className="interview-sim-stage">
+      <InterviewerAvatar state={phase} />
+
+      <div className="interview-sim-status">
+        <span className="interview-sim-mode-tag">{MODES.find(m => m.id === mode)?.emoji} {MODES.find(m => m.id === mode)?.label}</span>
+        <span className="interview-sim-status-text">{statusMsg}</span>
+      </div>
+
+      <div className="interview-sim-transcript">
+        {history.map((h, i) => {
+          // For the CURRENT AI turn that's actively being spoken, render
+          // sentence-by-sentence with the active sentence highlighted.
+          const isCurrentAi = h.role === "ai" && i === history.length - 1 && phase === "speaking" && aiSentences.length > 0;
+          if (isCurrentAi) {
+            return (
+              <div key={i} className="interview-sim-line ai">
+                <span className="interview-sim-line-tag">Interviewer · speaking</span>
+                <span className="interview-sim-line-text">
+                  {aiSentences.map((s, si) => (
+                    <span
+                      key={si}
+                      className={
+                        si === activeSentence ? "sim-sentence-active" :
+                        si <  activeSentence ? "sim-sentence-spoken" :
+                                              "sim-sentence-pending"
+                      }
+                    >
+                      {s}{si < aiSentences.length - 1 ? " " : ""}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className={`interview-sim-line ${h.role}`}>
+              <span className="interview-sim-line-tag">{h.role === "ai" ? "Interviewer" : "You"}</span>
+              <span className="interview-sim-line-text">{h.content}</span>
+            </div>
+          );
+        })}
+        {interim && phase === "listening" && (
+          <div className="interview-sim-line user interview-sim-interim">
+            <span className="interview-sim-line-tag">You · live</span>
+            <span className="interview-sim-line-text">{interim}</span>
+          </div>
+        )}
+        <div ref={transcriptEndRef} />
+      </div>
+
+      {error && <p className="error-msg" style={{ marginTop: 12 }}>{error}</p>}
+
+      {/* Type fallback — if the mic misbehaves, type the answer instead */}
+      {phase === "listening" && (
+        <div className="sim-type-row">
+          <textarea
+            className="sim-type-input"
+            placeholder="Mic acting up? Type your answer here instead…"
+            value={typedAnswer}
+            onChange={e => setTypedAnswer(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleTypedAnswer(); }
+            }}
+            rows={2}
+          />
+          <button
+            className="sim-type-send"
+            onClick={handleTypedAnswer}
+            disabled={typedAnswer.trim().length < 2}
+            title="Send typed answer (⌘/Ctrl+Enter)"
+          >
+            Send
+          </button>
+        </div>
+      )}
+
+      <div className="interview-sim-controls">
+        {phase === "listening" && (
+          <>
+            <button
+              className="sim-control-btn sim-control-skip"
+              onClick={() => {
+                const utt = (lastFinalRef.current + " " + interim).trim();
+                if (utt.length >= 2) handleUserSpoke(utt);
+              }}
+            >
+              ✓ I'm done answering
+            </button>
+            <button
+              className="sim-control-btn sim-control-rerecord"
+              onClick={reRecord}
+              title="Scrap this answer and start over"
+            >
+              ↻ Re-record
+            </button>
+          </>
+        )}
+        {phase === "speaking" && canInterrupt && (
+          <button
+            className="sim-control-btn sim-control-interrupt"
+            onClick={interruptAI}
+            title="Stop the interviewer and start your answer"
+          >
+            ✋ Interrupt
+          </button>
+        )}
+        <button className="sim-control-btn sim-control-end" onClick={() => endInterview()}>
+          ⏹ End Interview
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUMMARY CARD
+// ─────────────────────────────────────────────────────────────────────────────
+
+function InterviewSummary({ data, transcript = [], role = "", company = "", onRestart, onPracticeWeak }) {
+  const [copied, setCopied] = useState(null); // "summary" | "transcript" | null
+  const scores = [
+    { label: "Overall",       value: data.overall_score },
+    { label: "Communication", value: data.communication_score },
+    { label: "Tech Depth",    value: data.technical_depth_score },
+    { label: "Confidence",    value: data.confidence_score },
+    { label: "Structure",     value: data.structure_score },
+  ].filter(s => typeof s.value === "number");
+
+  const color = (v) => v >= 80 ? "#22e597" : v >= 60 ? "#c084fc" : v >= 40 ? "#ffce47" : "#ff4d6d";
+
+  const copy = (kind) => {
+    const text = kind === "summary"
+      ? summaryToText(data, { role, company })
+      : transcriptToText(transcript);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="interview-sim-summary">
+      <div className="interview-sim-summary-header">
+        <h2>Your Interview Scorecard</h2>
+        <button className="reset-btn" onClick={onRestart}>← New Mock</button>
+      </div>
+
+      {/* Actions — practice weaknesses + take your results with you */}
+      <div className="sim-summary-actions">
+        {data.weaknesses?.length > 0 && onPracticeWeak && (
+          <button className="sim-practice-weak-btn" onClick={() => onPracticeWeak(data.weaknesses)}>
+            🎯 Practice my weak areas
+          </button>
+        )}
+        <button className="sim-copy-btn" onClick={() => copy("summary")}>
+          {copied === "summary" ? "✓ Copied" : "📋 Copy summary"}
+        </button>
+        {transcript.length > 0 && (
+          <button className="sim-copy-btn" onClick={() => copy("transcript")}>
+            {copied === "transcript" ? "✓ Copied" : "📝 Copy transcript"}
+          </button>
+        )}
+      </div>
+
+      <div className="sim-score-grid">
+        {scores.map(s => (
+          <div key={s.label} className="sim-score-card">
+            <div className="sim-score-label">{s.label}</div>
+            <div className="sim-score-value" style={{ color: color(s.value) }}>
+              {s.value}<span className="sim-score-unit">/100</span>
+            </div>
+            <div className="sim-score-bar">
+              <div className="sim-score-bar-fill" style={{ width: `${s.value}%`, background: color(s.value) }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {data.strengths?.length > 0 && (
+        <div className="sim-summary-section">
+          <h3 className="sim-summary-heading">Strengths</h3>
+          <ul className="sim-summary-list sim-strengths">
+            {data.strengths.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.weaknesses?.length > 0 && (
+        <div className="sim-summary-section">
+          <h3 className="sim-summary-heading">Weaknesses</h3>
+          <ul className="sim-summary-list sim-weaknesses">
+            {data.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {data.key_moments?.length > 0 && (
+        <div className="sim-summary-section">
+          <h3 className="sim-summary-heading">Key Moments to Rewrite</h3>
+          {data.key_moments.map((m, i) => (
+            <div key={i} className="sim-key-moment">
+              <div className="sim-key-question"><strong>Q:</strong> {m.question}</div>
+              <div className="sim-key-before"><span className="tag tag-before">You said</span><p>{m.what_you_said}</p></div>
+              <div className="sim-key-after"><span className="tag tag-after">Better answer</span><p>{m.what_to_say_instead}</p></div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data.improvement_plan?.length > 0 && (
+        <div className="sim-summary-section">
+          <h3 className="sim-summary-heading">Your Improvement Plan</h3>
+          <ol className="sim-summary-list sim-improvement">
+            {data.improvement_plan.map((p, i) => <li key={i}>{p}</li>)}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
