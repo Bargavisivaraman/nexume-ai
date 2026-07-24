@@ -4,6 +4,9 @@
 
 ### AI-powered career co-pilot — from resume to offer letter
 
+[![Backend CI](https://github.com/Bargavisivaraman/nexume-ai/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/Bargavisivaraman/nexume-ai/actions/workflows/backend-ci.yml)
+[![Frontend CI](https://github.com/Bargavisivaraman/nexume-ai/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/Bargavisivaraman/nexume-ai/actions/workflows/frontend-ci.yml)
+
 [**Live site →**](https://nexume-ai.vercel.app/)
 
 A dark, futuristic, voice-enabled career platform that combines AI resume analysis, real-time job aggregation from public ATS boards, strict role-matched job discovery across 55 majors and 1,900+ roles, and a fully conversational AI mock-interview simulator.
@@ -139,15 +142,17 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-The ~180-test suite runs fully offline and covers: the security
+The ~210-test suite runs fully offline and covers: the security
 primitives (PDF validation, per-IP rate limiting end to end, admin
-auth), the ATS scoring engine and JD matching, every AI endpoint
-(interview generation/evaluation, the voice interview turn engine,
-cover letters, cold email, skill gap, salary) against a faked OpenAI
-client, the job aggregators and both ingestion pipelines against faked
-HTTP and Supabase, the /jobs listing with its graceful offline
-fallback, and the waitlist's file fallback. It runs in CI on every
-backend change.
+auth), the ATS scoring engine and JD matching, the full /analyze-resume
+upload pipeline (guards, scoring + LLM merge, invalid-resume handling,
+and the response cache), every AI endpoint — interview generation,
+evaluation, the voice turn engine, TTS and transcription with the
+whisper fallback, scorecards, cover letters, cold email, skill gap,
+salary, and the Nexus chatbot — against a faked OpenAI client, the job
+aggregators and both ingestion pipelines against faked HTTP and
+Supabase, the /jobs listing with its graceful offline fallback, and the
+waitlist's file fallback. It runs in CI on every backend change.
 
 ### Frontend
 
