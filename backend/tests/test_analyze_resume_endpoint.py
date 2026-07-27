@@ -8,7 +8,7 @@ real bytes, and a real blank PDF exercises the empty-extract path.
 import io
 import json
 
-from PyPDF2 import PdfWriter
+from pypdf import PdfWriter
 
 import main
 from tests.conftest import SAMPLE_RESUME

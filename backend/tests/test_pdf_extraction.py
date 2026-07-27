@@ -3,7 +3,7 @@
 import io
 
 import pytest
-from PyPDF2 import PdfWriter
+from pypdf import PdfWriter
 
 from main import extract_text_from_pdf
 

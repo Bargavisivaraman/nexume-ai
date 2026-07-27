@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 from openai import OpenAI
 from dotenv import load_dotenv
 import io
