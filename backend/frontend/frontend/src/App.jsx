@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense, Component } from "react";
+import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense } from "react";
+import TabErrorBoundary from "./components/TabErrorBoundary";
+import ScoreMeter from "./components/ScoreMeter";
+import ATSBreakdown from "./components/ATSBreakdown";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
 import { trackerToCsv } from "./lib/trackerStore";
@@ -9,40 +12,6 @@ import { trackerToCsv } from "./lib/trackerStore";
 const JobsTab = lazy(() => import("./components/JobsTab"));
 const InterviewSimulator = lazy(() => import("./components/InterviewSimulator"));
 
-// ── ERROR BOUNDARY ────────────────────────────────────────────────────────────
-// One crashing tab must not white-screen the whole app.
-class TabErrorBoundary extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-  componentDidCatch(error, info) {
-    console.error("[TabErrorBoundary]", error, info?.componentStack);
-  }
-  componentDidUpdate(prevProps) {
-    // Reset when the user switches tabs so a crash in one tab doesn't stick
-    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
-    }
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="tab-crash-card">
-          <div className="tab-crash-emoji">😵‍💫</div>
-          <h3>Something broke on this tab</h3>
-          <p>The rest of the app is fine. Try refreshing, or switch tabs and come back.</p>
-          <button className="analyze-btn" onClick={() => window.location.reload()}>Refresh</button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 // Suspense fallback matching the existing skeleton style
 function TabLoading() {
   return (
@@ -50,37 +19,6 @@ function TabLoading() {
       <div className="skeleton-line" style={{ width: "40%", height: 28, margin: "48px auto 20px" }} />
       <div className="skeleton-line" style={{ width: "70%", height: 16, margin: "0 auto 10px" }} />
       <div className="skeleton-line" style={{ width: "55%", height: 16, margin: "0 auto" }} />
-    </div>
-  );
-}
-
-// ── ATS BREAKDOWN ─────────────────────────────────────────────────────────────
-function ATSBreakdown({ breakdown }) {
-  if (!breakdown) return null;
-  const categories = [
-    { label: "Resume Sections",   pts: breakdown.sections?.normalised_points ?? 0,  max: 30 },
-    { label: "Quantified Impact", pts: breakdown.quantification?.points ?? 0,        max: 30 },
-    { label: "Action Verbs",      pts: breakdown.action_verbs?.points ?? 0,          max: 20 },
-    { label: "Keyword Relevance", pts: breakdown.keywords?.points ?? 0,              max: 30 },
-    { label: "Length & Format",   pts: breakdown.length_format?.points ?? 0,         max: 15 },
-    { label: "Contact Info",      pts: breakdown.contact_info?.points ?? 0,          max: 10 },
-  ];
-  return (
-    <div className="ats-breakdown reveal">
-      <div className="breakdown-header">Score Breakdown</div>
-      {categories.map(({ label, pts, max }) => {
-        const pct = Math.round((pts / max) * 100);
-        const color = pct >= 70 ? "#30d158" : pct >= 40 ? "#ffd60a" : "#ff453a";
-        return (
-          <div key={label} className="breakdown-row">
-            <div className="breakdown-label">{label}</div>
-            <div className="breakdown-bar-wrap">
-              <div className="breakdown-bar" style={{ width: `${pct}%`, background: color }} />
-            </div>
-            <div className="breakdown-pts" style={{ color }}>{pts}/{max}</div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -395,28 +333,6 @@ function Nav({ tab, setTab, resetApp, theme, setTheme }) {
       </div>
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} theme={theme} setTheme={setTheme} />}
     </nav>
-  );
-}
-
-// ── SCORE METER ───────────────────────────────────────────────────────────────
-function ScoreMeter({ score }) {
-  const color = score >= 75 ? "#30d158" : score >= 50 ? "#ffd60a" : "#ff453a";
-  const circumference = 2 * Math.PI * 54;
-  const offset = circumference - (score / 100) * circumference;
-  return (
-    <div className="score-meter">
-      <svg width="140" height="140" viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="8"/>
-        <circle cx="60" cy="60" r="54" fill="none" stroke={color} strokeWidth="8"
-          strokeDasharray={circumference} strokeDashoffset={offset}
-          strokeLinecap="round" transform="rotate(-90 60 60)"
-          style={{ transition: "stroke-dashoffset 1.2s cubic-bezier(0.22,1,0.36,1)" }}
-        />
-        <text x="60" y="56" textAnchor="middle" fill="white" fontSize="22" fontWeight="800">{score}</text>
-        <text x="60" y="72" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="10">/100</text>
-      </svg>
-      <p className="score-label">ATS Score</p>
-    </div>
   );
 }
 
