@@ -1020,6 +1020,15 @@ async def manual_refresh():
     return {"message": "Ingestion triggered — check /jobs/status/ for progress"}
 
 
+# /jobs/stats runs 7 Supabase queries per call and is polled every 30s by every
+# open tab. A short in-process TTL cache means N concurrent clients share one
+# DB round trip — and during boot-time ingestion (when the DB is busiest) the
+# endpoint stays fast instead of crawling. Only successful payloads are cached;
+# offline/error payloads always recompute so recovery is visible immediately.
+_STATS_CACHE: dict = {"data": None, "ts": 0.0}
+_STATS_TTL_SECONDS = 30.0
+
+
 @app.get("/jobs/stats", dependencies=[Depends(rate_limit_read)])
 async def jobs_stats():
     """
@@ -1032,7 +1041,13 @@ async def jobs_stats():
       - sources:           per-source counts (Greenhouse / Lever / Ashby / Workable / JSearch / etc.)
       - recent_runs:       last 3 ingestion_runs entries
       - next_run:          next scheduled tier1 run time (ISO)
+
+    Responses are served from a 30s in-process cache (see _STATS_CACHE above).
     """
+    cached = _STATS_CACHE["data"]
+    if cached is not None and (time.monotonic() - _STATS_CACHE["ts"]) < _STATS_TTL_SECONDS:
+        return cached
+
     try:
         now = datetime.now(timezone.utc)
         one_hour_ago = (now - timedelta(hours=1)).isoformat()
@@ -1097,7 +1112,7 @@ async def jobs_stats():
         except Exception:
             pass
 
-        return {
+        payload = {
             "total_jobs":           total,
             "last_updated":         last_updated,
             "new_in_last_hour":     new_count,
@@ -1108,6 +1123,9 @@ async def jobs_stats():
             "server_time":          now.isoformat(),
             "supabase_offline":     False,
         }
+        _STATS_CACHE["data"] = payload
+        _STATS_CACHE["ts"] = time.monotonic()
+        return payload
     except Exception as e:
         # Supabase offline (DNS fail, project paused, etc.) — return a
         # partial payload with maintenance flag instead of 500. Frontend

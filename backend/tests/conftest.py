@@ -237,6 +237,18 @@ def fake_llm(monkeypatch):
 _ip_counter = {"n": 0}
 
 
+@pytest.fixture(autouse=True)
+def reset_stats_cache():
+    """/jobs/stats keeps a 30s in-process TTL cache; clear it between tests so
+    a healthy payload cached by one test can't leak into an offline test."""
+    import main
+
+    if hasattr(main, "_STATS_CACHE"):
+        main._STATS_CACHE["data"] = None
+        main._STATS_CACHE["ts"] = 0.0
+    yield
+
+
 @pytest.fixture
 def api_client():
     """A TestClient plus per-test-unique client IP headers, so the in-memory
