@@ -10,7 +10,7 @@ function read() {
 
 function write(jobs) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs.slice(0, MAX_SAVED))); }
-  catch {}
+  catch { /* storage unavailable */ }
 }
 
 /**

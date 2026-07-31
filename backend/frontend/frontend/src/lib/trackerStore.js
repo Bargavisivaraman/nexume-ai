@@ -48,7 +48,7 @@ export function addJobToTracker(job, list = loadTracker()) {
     date:    new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
   };
   const updated = [entry, ...list];
-  try { localStorage.setItem(TRACKER_KEY, JSON.stringify(updated)); } catch {}
+  try { localStorage.setItem(TRACKER_KEY, JSON.stringify(updated)); } catch { /* storage unavailable */ }
   return updated;
 }
 

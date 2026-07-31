@@ -164,7 +164,7 @@ function AdminSettingsGroup() {
       else      localStorage.removeItem("nexume_admin");
       window.dispatchEvent(new Event("nexume_admin_change"));
       setAdminOn(next);
-    } catch {}
+    } catch { /* best effort */ }
   };
 
   if (!unlocked) {
@@ -783,7 +783,7 @@ function WaitlistBanner() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || "Couldn't join right now — try again in a minute");
       }
-      try { localStorage.setItem(WAITLIST_KEY, "joined"); } catch {}
+      try { localStorage.setItem(WAITLIST_KEY, "joined"); } catch { /* best effort */ }
       setState("joined");
     } catch (e) {
       setError(e.message);
@@ -793,7 +793,7 @@ function WaitlistBanner() {
   };
 
   const dismiss = () => {
-    try { localStorage.setItem(WAITLIST_KEY, "dismissed"); } catch {}
+    try { localStorage.setItem(WAITLIST_KEY, "dismissed"); } catch { /* best effort */ }
     setState("dismissed");
   };
 

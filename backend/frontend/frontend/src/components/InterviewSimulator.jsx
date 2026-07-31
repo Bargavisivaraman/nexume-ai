@@ -516,14 +516,14 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     try { mediaRecorderRef.current?.state !== "inactive" && mediaRecorderRef.current?.stop(); } catch { /* best effort */ }
     mediaRecorderRef.current = null;
     audioChunksRef.current = [];
-    try { mediaStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    try { mediaStreamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* best effort */ }
     mediaStreamRef.current = null;
   }, []);
 
   const endInterview = useCallback(async (finalHistory) => {
     stopListening();
     releaseMic();
-    try { audioRef.current?.pause(); } catch {}
+    try { audioRef.current?.pause(); } catch { /* best effort */ }
     setPhase("ended");
     setStatusMsg("Scoring your interview…");
 
@@ -579,7 +579,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     return () => {
       stopListening();
       releaseMic();
-      try { audioRef.current?.pause(); } catch {}
+      try { audioRef.current?.pause(); } catch { /* best effort */ }
       try { speechSynthesis.cancel(); } catch { /* not speaking */ }
     };
   }, [stopListening, releaseMic]);

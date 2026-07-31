@@ -38,7 +38,7 @@ export function saveInterviewToHistory(entry) {
 }
 
 export function clearInterviewHistory() {
-  try { localStorage.removeItem(IV_HISTORY_KEY); } catch {}
+  try { localStorage.removeItem(IV_HISTORY_KEY); } catch { /* storage unavailable */ }
 }
 
 /**
