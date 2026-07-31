@@ -23,6 +23,13 @@ function TabLoading() {
   );
 }
 
+// Sort indicator for the tracker table (module-level so React state survives re-renders)
+function SortIcon({ col, sortBy, sortDir }) {
+  return sortBy === col
+    ? <span style={{opacity:0.6, fontSize:10}}>{sortDir === 1 ? " ↑" : " ↓"}</span>
+    : <span style={{opacity:0.2, fontSize:10}}> ↕</span>;
+}
+
 const API = "https://landtherole-ai.onrender.com";
 
 // Fire-and-forget warm-up ping so Render server is hot before first user action
@@ -1248,10 +1255,6 @@ function TrackerPage() {
       return av < bv ? -sortDir : av > bv ? sortDir : 0;
     });
 
-  const SortIcon = ({ col }) => sortBy === col
-    ? <span style={{opacity:0.6, fontSize:10}}>{sortDir === 1 ? " ↑" : " ↓"}</span>
-    : <span style={{opacity:0.2, fontSize:10}}> ↕</span>;
-
   return (
     <div className="tracker-page">
       <div className="page-banner">
@@ -1300,10 +1303,10 @@ function TrackerPage() {
             <thead>
               <tr>
                 <th className="nt-th nt-check" />
-                <th className="nt-th nt-company" onClick={() => toggleSort("company")}>Company <SortIcon col="company"/></th>
-                <th className="nt-th" onClick={() => toggleSort("title")}>Position <SortIcon col="title"/></th>
-                <th className="nt-th" onClick={() => toggleSort("status")}>Status <SortIcon col="status"/></th>
-                <th className="nt-th" onClick={() => toggleSort("date")}>Date Applied <SortIcon col="date"/></th>
+                <th className="nt-th nt-company" onClick={() => toggleSort("company")}>Company <SortIcon col="company" sortBy={sortBy} sortDir={sortDir}/></th>
+                <th className="nt-th" onClick={() => toggleSort("title")}>Position <SortIcon col="title" sortBy={sortBy} sortDir={sortDir}/></th>
+                <th className="nt-th" onClick={() => toggleSort("status")}>Status <SortIcon col="status" sortBy={sortBy} sortDir={sortDir}/></th>
+                <th className="nt-th" onClick={() => toggleSort("date")}>Date Applied <SortIcon col="date" sortBy={sortBy} sortDir={sortDir}/></th>
                 <th className="nt-th">Notes</th>
                 <th className="nt-th">Link</th>
                 <th className="nt-th nt-actions" />
