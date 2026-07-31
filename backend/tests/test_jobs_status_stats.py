@@ -66,3 +66,36 @@ def test_warmup_pings(api_client):
     resp = api_client.get("/warmup")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+def test_stats_cache_expires_after_the_ttl(api_client, fake_supabase, monkeypatch):
+    """After the 30s TTL a fresh read must hit the DB again — a stale count
+    can't outlive the window."""
+    import main
+
+    main._STATS_CACHE["data"] = None  # isolate from other tests
+    t = [10_000.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: t[0])
+
+    fake_supabase(tables={"jobs": [{"fetched_at": "x"}], "ingestion_runs": []}, counts={"jobs": 10})
+    assert api_client.get("/jobs/stats").json()["total_jobs"] == 10
+
+    fake_supabase(tables={"jobs": [{"fetched_at": "x"}], "ingestion_runs": []}, counts={"jobs": 99})
+    t[0] += main._STATS_TTL_SECONDS + 1
+
+    assert api_client.get("/jobs/stats").json()["total_jobs"] == 99
+
+
+def test_offline_payload_is_never_cached(api_client, fake_supabase):
+    """An offline response must not poison the cache — the next healthy read
+    recovers immediately."""
+    import main
+
+    main._STATS_CACHE["data"] = None
+    fake_supabase(fail=True)
+    assert api_client.get("/jobs/stats").json()["supabase_offline"] is True
+
+    fake_supabase(tables={"jobs": [{"fetched_at": "x"}], "ingestion_runs": []}, counts={"jobs": 7})
+    body = api_client.get("/jobs/stats").json()
+    assert body["supabase_offline"] is False
+    assert body["total_jobs"] == 7
