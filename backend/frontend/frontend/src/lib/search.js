@@ -102,7 +102,6 @@ const TYPOS = {
   managemnet: "management",
   managar:    "manager",
   scientest:  "scientist",
-  scientest:  "scientist",
   scientis:   "scientist",
   develper:   "developer",
   cybersecuirty: "cybersecurity",
