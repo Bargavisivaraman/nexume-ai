@@ -30,3 +30,7 @@ if (!window.IntersectionObserver) {
   window.IntersectionObserver = IO
   globalThis.IntersectionObserver = IO
 }
+
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = vi.fn()
+}
