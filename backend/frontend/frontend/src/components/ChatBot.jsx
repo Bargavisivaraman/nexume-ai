@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, memo } from "react";
 
-const API = "https://landtherole-ai.onrender.com";
+import { API } from "../lib/api";
 
 /** Floating "Ask Nexus" career chatbot: FAB, drawer, and job cards. */
 const ChatBot = memo(function ChatBot() {

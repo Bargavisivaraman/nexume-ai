@@ -20,7 +20,7 @@ import { makeFetchWithRetry } from "../lib/fetchRetry";
 import { SECTOR_BY_ID } from "../data/sectors";
 import { MAJOR_BY_ID } from "../data/majors";
 
-const API = "https://landtherole-ai.onrender.com";
+import { API } from "../lib/api";
 
 const CACHE_KEY = "nexume_jobs_cache_v2";
 const CACHE_TTL = 5 * 60 * 1000;

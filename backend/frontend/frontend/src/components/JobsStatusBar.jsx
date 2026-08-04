@@ -1,7 +1,7 @@
 import { useEffect, useState, memo } from "react";
 import { roundedCount, timeAgo } from "../lib/format";
 
-const API = "https://landtherole-ai.onrender.com";
+import { API } from "../lib/api";
 const POLL_INTERVAL_MS = 30_000;
 
 function isAdmin() {

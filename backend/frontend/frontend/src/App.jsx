@@ -32,7 +32,7 @@ function SortIcon({ col, sortBy, sortDir }) {
     : <span style={{opacity:0.2, fontSize:10}}> ↕</span>;
 }
 
-const API = "https://landtherole-ai.onrender.com";
+import { API } from "./lib/api";
 
 // Fire-and-forget warm-up ping so Render server is hot before first user action
 fetch(`${API}/warmup`).catch(() => {});

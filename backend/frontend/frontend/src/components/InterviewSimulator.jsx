@@ -15,7 +15,7 @@ import {
   transcriptToText,
 } from "../lib/interviewHistory";
 
-const API = "https://landtherole-ai.onrender.com";
+import { API } from "../lib/api";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AVATAR — animated CSS orb that breathes/pulses/listens
