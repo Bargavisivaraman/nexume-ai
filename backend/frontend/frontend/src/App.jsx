@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import TabErrorBoundary from "./components/TabErrorBoundary";
 import ScoreMeter from "./components/ScoreMeter";
 import ATSBreakdown from "./components/ATSBreakdown";
 import Nav from "./components/Nav";
 import ChatBot from "./components/ChatBot";
+import TabLoading from "./components/TabLoading";
+import Footer from "./components/Footer";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
 import { trackerToCsv } from "./lib/trackerStore";
@@ -13,17 +15,6 @@ import { trackerToCsv } from "./lib/trackerStore";
 // state machine. Neither is needed to paint the landing hero.
 const JobsTab = lazy(() => import("./components/JobsTab"));
 const InterviewSimulator = lazy(() => import("./components/InterviewSimulator"));
-
-// Suspense fallback matching the existing skeleton style
-function TabLoading() {
-  return (
-    <div className="tab-loading">
-      <div className="skeleton-line" style={{ width: "40%", height: 28, margin: "48px auto 20px" }} />
-      <div className="skeleton-line" style={{ width: "70%", height: 16, margin: "0 auto 10px" }} />
-      <div className="skeleton-line" style={{ width: "55%", height: 16, margin: "0 auto" }} />
-    </div>
-  );
-}
 
 // Sort indicator for the tracker table (module-level so React state survives re-renders)
 function SortIcon({ col, sortBy, sortDir }) {
@@ -36,15 +27,6 @@ import { API } from "./lib/api";
 
 // Fire-and-forget warm-up ping so Render server is hot before first user action
 fetch(`${API}/warmup`).catch(() => {});
-
-// ── FOOTER ────────────────────────────────────────────────────────────────────
-const Footer = memo(function Footer() {
-  return (
-    <footer className="footer">
-      <p><span>Nexume</span> · Crafted by Bargavi Sivaraman · © 2026</p>
-    </footer>
-  );
-});
 
 
 // ── JD MATCH PANEL ────────────────────────────────────────────────────────────
