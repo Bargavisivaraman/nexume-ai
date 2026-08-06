@@ -165,14 +165,15 @@ npm install
 
 ```bash
 cd backend/frontend/frontend
-npm test              # Vitest + Testing Library (~160 tests)
+npm test              # Vitest + Testing Library (~180 tests)
 npm run test:coverage # with a V8 coverage report
 ```
 
 The suite covers the lib layer (search expansion, role matching,
 formatters, retry/backoff, saved-jobs and tracker stores), the data
-taxonomies, and component behavior — the pickers, job cards and saved
-view, pagination, the status bar (including the admin panel), and the
+taxonomies, and component behavior — the app shell (nav, settings,
+chatbot, error boundary), the pickers, job cards and saved view,
+pagination, the status bar (including the admin panel), and the
 interview setup and progress screens. It runs in CI on every frontend
 change.
 
