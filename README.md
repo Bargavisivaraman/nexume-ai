@@ -181,7 +181,7 @@ change.
 
 # Point at your local backend if you want
 # (default points at production: https://landtherole-ai.onrender.com)
-# Edit the API constant in src/components/JobsTab.jsx + InterviewSimulator.jsx
+# Edit the API constant in src/lib/api.js (single source of truth)
 
 npm run dev
 # → http://localhost:5173
