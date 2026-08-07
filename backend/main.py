@@ -47,27 +47,30 @@ async def _lifespan(app):
       tier2 every 30 min  — broader 50+ company set
       tier3 every 6 hours — long-tail companies
 
-    Plus an initial tier1 run 30 seconds after boot so first-load users see
-    fresh data. (scheduler and _scheduled_ats_ingestion are defined later in
-    this module; they exist by the time the app actually starts.)
+    First runs are deliberately deferred (tier1 +3min, tier2 +6min, tier3
+    +15min): on the free tier a boot usually means a visitor just woke the
+    instance, and the DB already holds a full jobs corpus — so their requests
+    get the quiet CPU, not an immediate ingestion burst. (scheduler and
+    _scheduled_ats_ingestion are defined later in this module; they exist by
+    the time the app actually starts.)
     """
     from datetime import datetime as _dt, timedelta as _td
     scheduler.add_job(
         _scheduled_ats_ingestion, "interval", minutes=5,
         args=["tier1"], id="ats_tier1",
-        next_run_time=_dt.now(timezone.utc) + _td(seconds=30),
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=3),
         coalesce=True, max_instances=1,
     )
     scheduler.add_job(
         _scheduled_ats_ingestion, "interval", minutes=30,
         args=["tier2"], id="ats_tier2",
-        next_run_time=_dt.now(timezone.utc) + _td(minutes=2),
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=6),
         coalesce=True, max_instances=1,
     )
     scheduler.add_job(
         _scheduled_ats_ingestion, "interval", hours=6,
         args=["tier3"], id="ats_tier3",
-        next_run_time=_dt.now(timezone.utc) + _td(minutes=10),
+        next_run_time=_dt.now(timezone.utc) + _td(minutes=15),
         coalesce=True, max_instances=1,
     )
     scheduler.start()

@@ -115,12 +115,18 @@ async def run_ats_ingestion(
     stats["companies_run"] = len(results)
     all_rows, stats["fetched"] = dedupe_rows_by_job_id(results)
 
-    # Upsert in chunks (Supabase has request-size limits)
+    # Upsert in chunks (Supabase has request-size limits).
+    # The supabase client is synchronous — run each upsert in a thread so it
+    # never blocks the event loop. Before this, a boot-time ingestion froze
+    # every in-flight user request (/jobs/, /jobs/stats hung for the whole
+    # upsert phase) because the loop couldn't schedule anything else.
     CHUNK = 200
     for i in range(0, len(all_rows), CHUNK):
         chunk = all_rows[i : i + CHUNK]
         try:
-            supabase.table("jobs").upsert(chunk, on_conflict="job_id").execute()
+            await asyncio.to_thread(
+                lambda c=chunk: supabase.table("jobs").upsert(c, on_conflict="job_id").execute()
+            )
             stats["inserted"] += len(chunk)
         except Exception as e:
             print(f"[ATS Ingest] DB upsert error on chunk {i}: {e}")
@@ -129,9 +135,9 @@ async def run_ats_ingestion(
     elapsed = (datetime.now(timezone.utc) - start).seconds
     print(f"[ATS Ingest] {run_id} done in {elapsed}s — {stats}")
 
-    # Log to ingestion_runs (best-effort)
+    # Log to ingestion_runs (best-effort; threaded for the same reason as above)
     try:
-        supabase.table("ingestion_runs").insert({
+        row = {
             "run_id":       run_id,
             "country":      "ATS",
             "queries_run":  stats["companies_run"],
@@ -140,7 +146,10 @@ async def run_ats_ingestion(
             "skipped":      0,
             "errors":       stats["errors"],
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("ingestion_runs").insert(row).execute()
+        )
     except Exception as e:
         print(f"[ATS Ingest] Failed to log run: {e}")
 
