@@ -21,7 +21,12 @@ ALTER TABLE jobs
   ADD COLUMN IF NOT EXISTS salary_period     text,
   ADD COLUMN IF NOT EXISTS source_name       text     DEFAULT 'Job Board',
   ADD COLUMN IF NOT EXISTS hash_dedupe       text,
-  ADD COLUMN IF NOT EXISTS is_active         boolean  DEFAULT true;
+  ADD COLUMN IF NOT EXISTS is_active         boolean  DEFAULT true,
+  -- ── ATS aggregator additions (Greenhouse / Lever / Ashby / Workable) ──────
+  ADD COLUMN IF NOT EXISTS sector            text,
+  ADD COLUMN IF NOT EXISTS is_internship     boolean  DEFAULT false,
+  ADD COLUMN IF NOT EXISTS is_new_grad       boolean  DEFAULT false,
+  ADD COLUMN IF NOT EXISTS tech_stack        jsonb;
 
 -- ── 2. Back-fill defaults for any existing rows ───────────────────────────────
 UPDATE jobs
@@ -51,6 +56,13 @@ CREATE INDEX IF NOT EXISTS idx_jobs_state           ON jobs (state);
 CREATE INDEX IF NOT EXISTS idx_jobs_posted_at       ON jobs (posted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_hash_dedupe     ON jobs (hash_dedupe);
 
+-- ATS aggregator indexes
+CREATE INDEX IF NOT EXISTS idx_jobs_sector          ON jobs (sector);
+CREATE INDEX IF NOT EXISTS idx_jobs_is_internship   ON jobs (is_internship) WHERE is_internship = true;
+CREATE INDEX IF NOT EXISTS idx_jobs_is_new_grad     ON jobs (is_new_grad)   WHERE is_new_grad   = true;
+CREATE INDEX IF NOT EXISTS idx_jobs_source_name     ON jobs (source_name);
+CREATE INDEX IF NOT EXISTS idx_jobs_tech_stack      ON jobs USING GIN (tech_stack);
+
 -- Title search (supports ilike pattern matching)
 CREATE INDEX IF NOT EXISTS idx_jobs_title_lower
   ON jobs (lower(title) text_pattern_ops);
@@ -71,6 +83,22 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_runs_created
   ON ingestion_runs (created_at DESC);
+
+-- ── 4b. Pro waitlist ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS waitlist (
+  id           uuid         DEFAULT gen_random_uuid() PRIMARY KEY,
+  email        text         NOT NULL UNIQUE,
+  source       text         DEFAULT 'site',
+  created_at   timestamptz  DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_waitlist_created ON waitlist (created_at DESC);
+
+ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service role full access waitlist" ON waitlist;
+CREATE POLICY "Service role full access waitlist"
+  ON waitlist FOR ALL
+  USING (auth.role() = 'service_role');
 
 -- ── 5. Row-Level Security (allow public read of active jobs) ──────────────────
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
