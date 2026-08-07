@@ -6,6 +6,8 @@ import Nav from "./components/Nav";
 import ChatBot from "./components/ChatBot";
 import TabLoading from "./components/TabLoading";
 import Footer from "./components/Footer";
+import JDMatchPanel from "./components/JDMatchPanel";
+import BulletRewriter from "./components/BulletRewriter";
 import "./App.css";
 import BackgroundFX from "./components/BackgroundFX";
 import { trackerToCsv } from "./lib/trackerStore";
@@ -28,121 +30,6 @@ import { API } from "./lib/api";
 // Fire-and-forget warm-up ping so Render server is hot before first user action
 fetch(`${API}/warmup`).catch(() => {});
 
-
-// ── JD MATCH PANEL ────────────────────────────────────────────────────────────
-function JDMatchPanel({ jd }) {
-  const color = jd.verdict_color === "green" ? "#30d158" : jd.verdict_color === "yellow" ? "#ffd60a" : "#ff453a";
-  const circumference = 2 * Math.PI * 40;
-  const offset = circumference - (jd.match_pct / 100) * circumference;
-  return (
-    <div className="jd-panel reveal">
-      <div className="jd-header">
-        <div className="jd-circle">
-          <svg width="100" height="100" viewBox="0 0 90 90">
-            <circle cx="45" cy="45" r="40" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="7"/>
-            <circle cx="45" cy="45" r="40" fill="none" stroke={color} strokeWidth="7"
-              strokeDasharray={circumference} strokeDashoffset={offset}
-              strokeLinecap="round" transform="rotate(-90 45 45)"
-              style={{ transition: "stroke-dashoffset 1.4s cubic-bezier(0.22,1,0.36,1) 0.3s" }}
-            />
-            <text x="45" y="41" textAnchor="middle" fill="white" fontSize="18" fontWeight="800">{jd.match_pct}%</text>
-            <text x="45" y="55" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="8">match</text>
-          </svg>
-        </div>
-        <div className="jd-verdict">
-          <span className="verdict-badge" style={{ color, borderColor: color }}>{jd.verdict}</span>
-          <p>{jd.matched_keywords.length} of {jd.total_jd_keywords} job keywords found in your resume</p>
-        </div>
-      </div>
-      {jd.missing_keywords.length > 0 && (
-        <div className="jd-missing">
-          <h4>Missing Keywords</h4>
-          <div className="keyword-chips">
-            {jd.missing_keywords.map((kw, i) => <span key={i} className="chip chip-missing">{kw}</span>)}
-          </div>
-        </div>
-      )}
-      {jd.matched_keywords.length > 0 && (
-        <div className="jd-matched">
-          <h4>Matched Keywords</h4>
-          <div className="keyword-chips">
-            {jd.matched_keywords.map((kw, i) => <span key={i} className="chip chip-matched">{kw}</span>)}
-          </div>
-        </div>
-      )}
-      {jd.suggestions.length > 0 && (
-        <div className="jd-suggestions">
-          <h4>Quick Wins</h4>
-          <ul>{jd.suggestions.map((s, i) => <li key={i}>{s}</li>)}</ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── BULLET REWRITER ───────────────────────────────────────────────────────────
-function BulletRewriter({ bullets, jobContext }) {
-  const [selected, setSelected] = useState(null);
-  const [rewriting, setRewriting] = useState(false);
-  const [result, setResult] = useState(null);
-  const [copied, setCopied] = useState(false);
-
-  const rewrite = async (bullet) => {
-    setSelected(bullet); setRewriting(true); setResult(null); setCopied(false);
-    try {
-      const res = await fetch(`${API}/rewrite-bullet/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bullet, job_context: jobContext || "" }),
-      });
-      setResult(await res.json());
-    } catch {
-      setResult({ rewritten: "Failed to rewrite. Try again.", explanation: "" });
-    } finally { setRewriting(false); }
-  };
-
-  const copy = () => {
-    navigator.clipboard.writeText(result.rewritten);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="bullet-rewriter reveal">
-      <div className="rewriter-intro">
-        <span className="rewriter-badge">AI Rewriter</span>
-        <p>Click any weak bullet below to instantly improve it with strong action verbs, metrics, and ATS keywords.</p>
-      </div>
-      <div className="bullet-list">
-        {bullets.map((b, i) => (
-          <button key={i} className={`bullet-item ${selected === b ? "selected" : ""}`} onClick={() => rewrite(b)}>
-            <span className="bullet-weak-tag">weak</span>
-            <span className="bullet-text">{b}</span>
-            <span className="bullet-arrow">→</span>
-          </button>
-        ))}
-      </div>
-      {(rewriting || result) && (
-        <div className="rewrite-result">
-          {rewriting ? (
-            <div className="rewrite-loading"><span className="spinner" /> Rewriting with AI…</div>
-          ) : result && (
-            <>
-              <div className="rewrite-original"><span className="tag tag-before">Before</span><p>{selected}</p></div>
-              <div className="rewrite-arrow-down">↓</div>
-              <div className="rewrite-improved">
-                <span className="tag tag-after">After</span>
-                <p>{result.rewritten}</p>
-                <button className="copy-btn" onClick={copy}>{copied ? "✓ Copied!" : "Copy"}</button>
-              </div>
-              {result.explanation && <p className="rewrite-explanation">{result.explanation}</p>}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── INTERVIEW TAB ─────────────────────────────────────────────────────────────
 function InterviewPage({ prefillTitle, prefillCompany }) {
