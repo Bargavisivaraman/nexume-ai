@@ -11,6 +11,7 @@ from typing import Optional
 import httpx
 
 from .common import (
+    parse_location,
     detect_experience_level, detect_internship, detect_new_grad,
     detect_work_mode, detect_job_type, extract_tech_stack,
     parse_salary, compute_dedupe_hash, truncate, now_utc_iso,
@@ -79,13 +80,12 @@ async def fetch_lever(
 
         apply_url = j.get("hostedUrl") or j.get("applyUrl") or ""
 
-        city, state = None, None
-        if loc_str and "," in loc_str:
-            parts = [p.strip() for p in loc_str.split(",")]
-            city = parts[0] or None
-            state = parts[1] if len(parts) > 1 else None
-        elif loc_str:
-            city = loc_str
+        # Real country detection — boards list "London" / "Toronto" bare and
+        # we must not file those under the US feed.
+        city, state, job_country = parse_location(loc_str, country)
+        api_country = (j.get("country") or "").strip().upper()
+        if len(api_country) == 2 and api_country.isalpha():
+            job_country = api_country  # Lever's structured field beats text parsing
 
         tech_stack = extract_tech_stack(description)
 
@@ -96,7 +96,7 @@ async def fetch_lever(
             "location":         loc_str,
             "city":             city,
             "state":            state,
-            "country":          country,
+            "country":          job_country,
             "is_remote":        is_remote,
             "work_mode":        work_mode,
             "industry":         None,

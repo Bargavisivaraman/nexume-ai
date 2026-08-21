@@ -13,6 +13,7 @@ from typing import Optional
 import httpx
 
 from .common import (
+    parse_location,
     detect_experience_level, detect_internship, detect_new_grad,
     detect_work_mode, detect_job_type, extract_tech_stack,
     compute_dedupe_hash, truncate, now_utc_iso,
@@ -93,13 +94,15 @@ async def fetch_ashby(
 
         apply_url = j.get("jobUrl") or j.get("applyUrl") or ""
 
-        city, state = None, None
-        if loc_str and "," in loc_str:
-            parts = [p.strip() for p in loc_str.split(",")]
-            city = parts[0] or None
-            state = parts[1] if len(parts) > 1 else None
-        elif loc_str:
-            city = loc_str
+        # Real country detection — boards list "London" / "Toronto" bare and
+        # we must not file those under the US feed.
+        city, state, job_country = parse_location(loc_str, country)
+        addr = ((j.get("address") or {}).get("postalAddress") or {})
+        addr_country = (addr.get("addressCountry") or "").strip()
+        if addr_country:
+            # Ashby gives a name ("United Kingdom") or a code; resolve via the same table
+            _, _, resolved = parse_location(addr_country, job_country)
+            job_country = resolved
 
         tech_stack = extract_tech_stack(description)
 
@@ -110,7 +113,7 @@ async def fetch_ashby(
             "location":         loc_str,
             "city":             city,
             "state":            state,
-            "country":          country,
+            "country":          job_country,
             "is_remote":        is_remote,
             "work_mode":        work_mode,
             "industry":         None,

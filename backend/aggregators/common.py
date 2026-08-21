@@ -142,6 +142,195 @@ def parse_salary(text: str) -> tuple[Optional[float], Optional[float], Optional[
     return (None, None, None)
 
 
+# ── location → (city, state, country) ────────────────────────────────────────
+# ATS boards give a free-text location ("London", "New York, NY", "Remote -
+# Germany", "Toronto, Ontario, Canada"). We need a real country so the US feed
+# stops showing Stockholm and Jakarta. Unknown strings fall back to the
+# adapter's default country (companies in our registry are mostly US-based),
+# so recall only drops where we are confident the job is abroad.
+
+US_STATE_CODES = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS",
+    "KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY",
+    "NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV",
+    "WI","WY","DC",
+}
+US_STATE_NAMES = {
+    "alabama":"AL","alaska":"AK","arizona":"AZ","arkansas":"AR","california":"CA",
+    "colorado":"CO","connecticut":"CT","delaware":"DE","florida":"FL","georgia":"GA",
+    "hawaii":"HI","idaho":"ID","illinois":"IL","indiana":"IN","iowa":"IA","kansas":"KS",
+    "kentucky":"KY","louisiana":"LA","maine":"ME","maryland":"MD","massachusetts":"MA",
+    "michigan":"MI","minnesota":"MN","mississippi":"MS","missouri":"MO","montana":"MT",
+    "nebraska":"NE","nevada":"NV","new hampshire":"NH","new jersey":"NJ","new mexico":"NM",
+    "new york":"NY","north carolina":"NC","north dakota":"ND","ohio":"OH","oklahoma":"OK",
+    "oregon":"OR","pennsylvania":"PA","rhode island":"RI","south carolina":"SC",
+    "south dakota":"SD","tennessee":"TN","texas":"TX","utah":"UT","vermont":"VT",
+    "virginia":"VA","washington":"WA","west virginia":"WV","wisconsin":"WI","wyoming":"WY",
+    "district of columbia":"DC","washington dc":"DC","washington d.c.":"DC",
+}
+
+# Country names / aliases → ISO-2. Matched as whole comma-separated parts or
+# whole words, longest alias first.
+COUNTRY_ALIASES = {
+    "united states":"US","usa":"US","u.s.":"US","u.s.a.":"US","us":"US","america":"US",
+    "united kingdom":"GB","uk":"GB","u.k.":"GB","england":"GB","scotland":"GB","wales":"GB","great britain":"GB",
+    "canada":"CA","ireland":"IE","germany":"DE","deutschland":"DE","france":"FR","spain":"ES","españa":"ES",
+    "portugal":"PT","italy":"IT","italia":"IT","netherlands":"NL","the netherlands":"NL","belgium":"BE",
+    "switzerland":"CH","austria":"AT","sweden":"SE","norway":"NO","denmark":"DK","finland":"FI",
+    "poland":"PL","czech republic":"CZ","czechia":"CZ","hungary":"HU","romania":"RO","greece":"GR",
+    "ukraine":"UA","estonia":"EE","latvia":"LV","lithuania":"LT","serbia":"RS","bulgaria":"BG","croatia":"HR",
+    "turkey":"TR","türkiye":"TR","israel":"IL","united arab emirates":"AE","uae":"AE","saudi arabia":"SA",
+    "india":"IN","pakistan":"PK","bangladesh":"BD","sri lanka":"LK","singapore":"SG","malaysia":"MY",
+    "indonesia":"ID","philippines":"PH","vietnam":"VN","thailand":"TH","japan":"JP","south korea":"KR",
+    "korea":"KR","china":"CN","hong kong":"HK","taiwan":"TW","australia":"AU","new zealand":"NZ",
+    "brazil":"BR","brasil":"BR","mexico":"MX","méxico":"MX","argentina":"AR","colombia":"CO","chile":"CL",
+    "peru":"PE","uruguay":"UY","costa rica":"CR","south africa":"ZA","nigeria":"NG","kenya":"KE","egypt":"EG",
+}
+
+# Major non-US hiring cities that ATS boards list bare ("London", "Toronto").
+# Only unambiguous ones — anything that collides with a US city name is omitted.
+CITY_COUNTRY = {
+    # UK / Ireland
+    "london":"GB","manchester":"GB","edinburgh":"GB","glasgow":"GB","bristol":"GB","leeds":"GB",
+    "birmingham, uk":"GB","belfast":"GB","dublin":"IE","cork":"IE",
+    # Canada
+    "toronto":"CA","vancouver":"CA","montreal":"CA","montréal":"CA","ottawa":"CA","calgary":"CA",
+    "waterloo":"CA","kitchener":"CA","edmonton":"CA","quebec city":"CA","québec":"CA","halifax":"CA",
+    # Europe
+    "berlin":"DE","munich":"DE","münchen":"DE","hamburg":"DE","frankfurt":"DE","cologne":"DE","köln":"DE",
+    "paris":"FR","lyon":"FR","amsterdam":"NL","rotterdam":"NL","utrecht":"NL","eindhoven":"NL",
+    "brussels":"BE","bruxelles":"BE","antwerp":"BE","zurich":"CH","zürich":"CH","geneva":"CH","basel":"CH",
+    "vienna":"AT","wien":"AT","stockholm":"SE","gothenburg":"SE","göteborg":"SE","malmö":"SE","malmo":"SE",
+    "oslo":"NO","copenhagen":"DK","københavn":"DK","helsinki":"FI","madrid":"ES","barcelona":"ES",
+    "valencia":"ES","lisbon":"PT","lisboa":"PT","porto":"PT","milan":"IT","milano":"IT","rome":"IT",
+    "roma":"IT","warsaw":"PL","warszawa":"PL","krakow":"PL","kraków":"PL","wroclaw":"PL","wrocław":"PL",
+    "gdansk":"PL","prague":"CZ","praha":"CZ","brno":"CZ","budapest":"HU","bucharest":"RO","athens":"GR",
+    "kyiv":"UA","kiev":"UA","tallinn":"EE","riga":"LV","vilnius":"LT","belgrade":"RS","sofia":"BG",
+    "zagreb":"HR","istanbul":"TR","ankara":"TR",
+    # Middle East / Africa
+    "tel aviv":"IL","tel aviv-yafo":"IL","jerusalem":"IL","haifa":"IL","dubai":"AE","abu dhabi":"AE",
+    "riyadh":"SA","doha":"QA","cairo":"EG","lagos":"NG","nairobi":"KE","cape town":"ZA","johannesburg":"ZA",
+    # Asia-Pacific
+    "bangalore":"IN","bengaluru":"IN","hyderabad":"IN","mumbai":"IN","pune":"IN","chennai":"IN",
+    "delhi":"IN","new delhi":"IN","gurgaon":"IN","gurugram":"IN","noida":"IN","kolkata":"IN",
+    "singapore":"SG","kuala lumpur":"MY","jakarta":"ID","manila":"PH","ho chi minh city":"VN","hanoi":"VN",
+    "bangkok":"TH","tokyo":"JP","osaka":"JP","seoul":"KR","beijing":"CN","shanghai":"CN","shenzhen":"CN",
+    "hangzhou":"CN","hong kong":"HK","taipei":"TW","sydney":"AU","melbourne":"AU","brisbane":"AU",
+    "perth":"AU","canberra":"AU","auckland":"NZ","wellington":"NZ",
+    # Latin America
+    "são paulo":"BR","sao paulo":"BR","rio de janeiro":"BR","mexico city":"MX","ciudad de méxico":"MX",
+    "guadalajara":"MX","monterrey":"MX","buenos aires":"AR","bogotá":"CO","bogota":"CO","medellín":"CO",
+    "medellin":"CO","santiago":"CL","lima":"PE","montevideo":"UY","san josé":"CR",
+}
+
+_COUNTRY_ALIAS_RE = re.compile(
+    r"(?<![\w.])(" + "|".join(
+        re.escape(a) for a in sorted(COUNTRY_ALIASES, key=len, reverse=True)
+    ) + r")(?![\w.])",
+    re.IGNORECASE,
+)
+_LOCATION_NOISE_RE = re.compile(
+    r"\b(remote|hybrid|on[- ]?site|flexible|anywhere|distributed|office|hq|headquarters)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_location(loc_str: Optional[str], default_country: str = "US") -> tuple[Optional[str], Optional[str], str]:
+    """Split a free-text ATS location into (city, state, country).
+
+    Country resolution, in order of confidence:
+      1. an explicit country name/code anywhere in the string ("Remote - Germany")
+      2. a US state code or name as a part ("Austin, TX", "Remote, California")
+      3. a known non-US city ("London", "Toronto, Ontario")
+      4. ``default_country``
+
+    city/state keep the old best-effort behaviour (first part / second part)
+    but a recognised US state is normalised to its two-letter code and a
+    trailing country part is not mistaken for a state.
+    """
+    if not loc_str or not loc_str.strip():
+        return None, None, default_country
+
+    raw = loc_str.strip()
+    parts = [p.strip() for p in re.split(r"[,/|·•]|\s[-–—]\s", raw) if p.strip()]
+    lowered = [p.lower() for p in parts]
+
+    # 1. explicit country anywhere
+    country: Optional[str] = None
+    for p in lowered:
+        if p in COUNTRY_ALIASES:
+            country = COUNTRY_ALIASES[p]
+            break
+    if country is None:
+        m = _COUNTRY_ALIAS_RE.search(raw)
+        # Bare "us"/"uk" only count when they stand as their own part or are
+        # upper-case, so "Austin, TX" ("us" inside "Austin") can't match.
+        if m and (len(m.group(1)) > 2 or m.group(1).isupper() or m.group(1).lower() in lowered):
+            country = COUNTRY_ALIASES[m.group(1).lower()]
+
+    # 2. US state as a part. Two-letter codes win over names so "Washington, DC"
+    #    is DC (not WA) and "New York, NY" reads the NY, leaving "New York" as
+    #    the city.
+    state: Optional[str] = None
+    for p in parts:
+        m = _STATE_CODE_RE.match(p)
+        if m and m.group(1) in US_STATE_CODES:
+            state = m.group(1)
+            break
+    if state is None:
+        for p in lowered[1:] or lowered:   # a bare "New York" is a city first
+            if p in US_STATE_NAMES:
+                state = US_STATE_NAMES[p]
+                break
+    if country is None and state is not None:
+        country = "US"
+
+    # 3. known non-US city (whole part match, or the whole string)
+    if country is None:
+        for p in lowered:
+            if p in CITY_COUNTRY:
+                country = CITY_COUNTRY[p]
+                break
+        if country is None and raw.lower() in CITY_COUNTRY:
+            country = CITY_COUNTRY[raw.lower()]
+
+    if country is None:
+        country = default_country
+
+    # city = first part that is a real place (not "Remote (US)", a country,
+    # or a bare state code). A US state *name* in first position stays a city
+    # ("New York", "Washington") because that's how boards list the city.
+    city: Optional[str] = None
+    for idx, p in enumerate(parts):
+        pl = p.lower()
+        if _is_placeholder(p) or pl in COUNTRY_ALIASES:
+            continue
+        if _STATE_CODE_RE.fullmatch(p) and p.upper() in US_STATE_CODES:
+            continue
+        if idx > 0 and pl in US_STATE_NAMES:
+            continue
+        city = p
+        break
+
+    # Non-US: keep the second part as a region only if it isn't the country
+    if state is None and len(parts) > 1:
+        second = parts[1]
+        if second != city and second.lower() not in COUNTRY_ALIASES and not _is_placeholder(second):
+            state = second
+
+    return city, state, country
+
+
+_STATE_CODE_RE = re.compile(r"^([A-Z]{2})(?![A-Za-z])")
+
+
+def _is_placeholder(part: str) -> bool:
+    """True for parts that carry no place — "Remote", "Remote (US)", "Hybrid"."""
+    rest = _LOCATION_NOISE_RE.sub("", part)
+    rest = _COUNTRY_ALIAS_RE.sub("", rest)
+    return rest.strip(" -–—()[]/") == ""
+
+
 def compute_dedupe_hash(title: str, company: str, location: str) -> str:
     """MD5 of normalized title|company|location — secondary dedup key."""
     raw = f"{(title or '').lower().strip()}|{(company or '').lower().strip()}|{(location or '').lower().strip()}"
