@@ -4065,3 +4065,35 @@ li::before {
   .chip-matched { border: 1px solid #16a34a !important; }
   .reveal, .stagger-list li { opacity: 1 !important; transform: none !important; }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   AI TOOLS v2 — JD decoder, STAR stories, pitch, negotiator, reply composer
+   ════════════════════════════════════════════════════════════════════════════ */
+.tool-nav-group { display: flex; flex-direction: column; gap: 8px; }
+.tool-nav-group + .tool-nav-group { margin-top: 14px; }
+.tool-nav-group-label {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-dim); padding: 0 6px 2px;
+}
+.star-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.star-block {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--border-soft);
+  border-radius: var(--r-md); padding: 16px;
+}
+.star-letter {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--g-violet); color: #fff; font-weight: 800; font-size: 16px;
+  box-shadow: var(--glow-sm);
+}
+.star-label { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--v-300); margin-bottom: 4px; }
+.star-text { font-size: 13.5px; line-height: 1.65; color: var(--text); }
+.pitch-hook {
+  font-size: 17px; font-weight: 600; line-height: 1.5; color: var(--text);
+  border-left: 3px solid var(--v-500); padding: 6px 0 6px 16px; margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+@media (max-width: 720px) {
+  .star-grid { grid-template-columns: 1fr; }
+}

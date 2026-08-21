@@ -1997,6 +1997,266 @@ Return JSON:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ROUTES — AI TOOLS v2 (JD decoder, STAR stories, pitch, negotiation, replies)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _llm_json(system: str, user: str, *, max_tokens: int = 900, temperature: float = 0.3, label: str = "Request") -> dict:
+    """Run one JSON-mode gpt-4o-mini call off the event loop and parse the result."""
+    try:
+        response = await asyncio.to_thread(lambda: openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system + " Return ONLY valid JSON."},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        ))
+        return json.loads(response.choices[0].message.content.strip())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{label} failed: {str(e)}")
+
+
+class JDDecodeRequest(BaseModel):
+    job_description: str
+    resume_text: Optional[str] = ""
+
+@app.post("/decode-jd/", dependencies=[Depends(rate_limit_expensive)])
+async def decode_jd(req: JDDecodeRequest):
+    """Turn a job description into what the hiring team actually wants."""
+    if len(req.job_description.strip()) < 80:
+        raise HTTPException(status_code=400, detail="Job description too short")
+    resume_block = f"\nCandidate resume (for fit notes):\n{req.resume_text[:2000]}\n" if (req.resume_text or "").strip() else ""
+    return await _llm_json(
+        "You are a hiring manager who has written and screened hundreds of job descriptions. You read between the lines and are candid about red flags.",
+        f"""
+Decode this job description for a candidate.
+{resume_block}
+Job description:
+{req.job_description[:5000]}
+
+Return JSON:
+{{
+  "role_summary": "2 sentences: who they are really looking for, in plain English",
+  "seniority": "Intern / Entry / Mid / Senior / Staff+ / Leadership",
+  "must_haves": ["hard requirements a screener will reject on — max 8"],
+  "nice_to_haves": ["listed but negotiable — max 8"],
+  "hidden_expectations": ["things implied but not stated (on-call, ambiguity, scope) — max 5"],
+  "red_flags": [{{"flag": "short label", "why": "one sentence on why it matters"}}],
+  "green_flags": ["genuinely positive signals — max 5"],
+  "sponsorship_signal": "Explicitly sponsors / Explicitly does not sponsor / Not mentioned / Ambiguous",
+  "sponsorship_note": "one sentence quoting or explaining the signal",
+  "comp_transparency": "Range listed / Vague / Not mentioned",
+  "keywords_for_resume": ["exact phrases worth mirroring on a resume — max 12"],
+  "questions_to_ask": ["sharp questions for the recruiter or hiring manager — max 6"],
+  "fit_notes": ["if a resume was provided: 3-5 specific fit or gap observations, else empty"]
+}}
+""",
+        max_tokens=1100, label="JD decoding",
+    )
+
+
+class StarStoryRequest(BaseModel):
+    experience: str
+    competency: Optional[str] = ""
+    target_role: Optional[str] = ""
+
+@app.post("/build-star-story/", dependencies=[Depends(rate_limit_expensive)])
+async def build_star_story(req: StarStoryRequest):
+    """Shape a raw experience into a STAR interview story with timed versions."""
+    if len(req.experience.strip()) < 60:
+        raise HTTPException(status_code=400, detail="Describe the experience in a bit more detail (60+ characters)")
+    return await _llm_json(
+        "You are an interview coach who turns messy experience descriptions into crisp STAR stories. Never invent facts; if a metric is missing, leave a clearly marked placeholder like [X%].",
+        f"""
+Build a STAR interview story.
+
+Target role: {req.target_role or "not specified"}
+Competency to showcase: {req.competency or "let the story decide"}
+
+Raw experience from the candidate:
+{req.experience[:3000]}
+
+Return JSON:
+{{
+  "title": "5-7 word memorable name for this story",
+  "situation": "2-3 sentences",
+  "task": "1-2 sentences, make the candidate's ownership explicit",
+  "action": "3-5 sentences, first person, specific decisions and trade-offs",
+  "result": "1-3 sentences with metrics (use [placeholders] if missing)",
+  "version_30s": "the whole story in ~75 words for a quick answer",
+  "version_90s": "the full spoken version in ~220 words, natural speech",
+  "competencies_shown": ["leadership", "..."],
+  "answers_questions": ["interview questions this story is a strong answer to — max 6"],
+  "likely_follow_ups": [{{"question": "what an interviewer will probe", "how_to_answer": "one sentence"}}],
+  "missing_details": ["facts the candidate should fill in to make it stronger — max 4"],
+  "weak_spots": ["honest critique — max 3"]
+}}
+""",
+        max_tokens=1300, temperature=0.4, label="STAR story",
+    )
+
+
+class PitchRequest(BaseModel):
+    resume_text: str
+    target_role: str
+    context: Optional[str] = "interview"   # interview | networking | recruiter_call | career_fair
+
+@app.post("/generate-pitch/", dependencies=[Depends(rate_limit_expensive)])
+async def generate_pitch(req: PitchRequest):
+    """'Tell me about yourself' in 30/60/90-second versions plus headline options."""
+    if len(req.resume_text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+    if not req.target_role.strip():
+        raise HTTPException(status_code=400, detail="Target role required")
+    context = (req.context or "interview").strip().lower()
+    if context not in {"interview", "networking", "recruiter_call", "career_fair"}:
+        context = "interview"
+    return await _llm_json(
+        "You are a communications coach for job seekers. You write pitches that sound like a real person talking, not a resume read aloud. No buzzwords, no 'passionate', no 'results-driven'.",
+        f"""
+Write elevator pitches for this candidate.
+
+Target role: {req.target_role}
+Setting: {context.replace("_", " ")}
+
+Resume:
+{req.resume_text[:3000]}
+
+Return JSON:
+{{
+  "hook": "one opening sentence that makes them memorable",
+  "pitch_30s": "~70 words, spoken, present → past → why this role",
+  "pitch_60s": "~140 words, spoken",
+  "pitch_90s": "~210 words, spoken, includes one concrete proof point with a number",
+  "closing_line": "a natural last sentence that invites the next step for this setting",
+  "headline_options": ["3 LinkedIn-style headlines under 120 characters"],
+  "proof_points": ["the 3 strongest facts from the resume the pitch leans on"],
+  "avoid": ["2-3 things this candidate specifically should not say, based on the resume"],
+  "delivery_tips": ["3 short tips on pacing, tone, or body language for this setting"]
+}}
+""",
+        max_tokens=1200, temperature=0.5, label="Pitch generation",
+    )
+
+
+class NegotiateRequest(BaseModel):
+    role: str
+    company: Optional[str] = ""
+    location: Optional[str] = "United States"
+    base_salary: float
+    bonus: Optional[float] = None
+    equity: Optional[str] = ""
+    signing_bonus: Optional[float] = None
+    competing_offer: Optional[str] = ""
+    years_experience: Optional[float] = None
+    priorities: Optional[str] = ""   # e.g. "base, remote, start date"
+    notes: Optional[str] = ""
+
+@app.post("/negotiate-offer/", dependencies=[Depends(rate_limit_expensive)])
+async def negotiate_offer(req: NegotiateRequest):
+    """Assess an offer and script the counter."""
+    if not req.role.strip():
+        raise HTTPException(status_code=400, detail="Role required")
+    if req.base_salary <= 0:
+        raise HTTPException(status_code=400, detail="Base salary must be positive")
+    return await _llm_json(
+        "You are a compensation negotiation coach who has seen thousands of tech offers. Be specific with numbers, realistic about leverage, and never advise bluffing about competing offers.",
+        f"""
+Assess this offer and prepare the negotiation.
+
+Role: {req.role}
+Company: {req.company or "not specified"}
+Location: {req.location}
+Years of experience: {req.years_experience if req.years_experience is not None else "not specified"}
+Base salary: ${req.base_salary:,.0f}
+Annual bonus: {f"${req.bonus:,.0f}" if req.bonus else "none / not specified"}
+Equity: {req.equity or "none / not specified"}
+Signing bonus: {f"${req.signing_bonus:,.0f}" if req.signing_bonus else "none"}
+Competing offer: {req.competing_offer or "none"}
+Candidate priorities: {req.priorities or "not specified"}
+Extra notes: {req.notes or "none"}
+
+Return JSON:
+{{
+  "verdict": "Strong / Fair / Below market / Lowball",
+  "verdict_reason": "2 sentences on how this sits against the market for this role and location",
+  "market_range": {{"low": <int>, "mid": <int>, "high": <int>}},
+  "leverage_score": <integer 1-10>,
+  "leverage_reason": "one sentence",
+  "recommended_ask": {{"base": <int>, "signing_bonus": <int or null>, "other": "non-cash asks worth making (remote, title, start date, review timeline)"}},
+  "walk_away_number": <int>,
+  "counter_email": "a complete, warm, confident counter-offer email (120-180 words) with the specific number",
+  "phone_script": ["5-7 short lines the candidate can say on a call, in order"],
+  "if_they_say_no": ["3 fallback asks if base is firm"],
+  "mistakes_to_avoid": ["3-4 specific mistakes for this situation"],
+  "questions_to_ask": ["3 clarifying questions about the package (vesting, bonus targets, review cycle)"]
+}}
+""",
+        max_tokens=1300, temperature=0.35, label="Offer negotiation",
+    )
+
+
+class ReplyRequest(BaseModel):
+    their_message: str
+    intent: str            # accept_interview | reschedule | decline | ask_details | thank_you | follow_up | accept_offer | decline_offer
+    your_name: Optional[str] = ""
+    context: Optional[str] = ""   # availability, reason, details to include
+    tone: Optional[str] = "warm"  # warm | formal | brief
+
+REPLY_INTENTS = {
+    "accept_interview": "accept an interview invitation and propose times",
+    "reschedule": "politely reschedule an interview",
+    "decline": "decline to move forward while keeping the door open",
+    "ask_details": "ask for more details (comp range, team, process, sponsorship) before committing",
+    "thank_you": "send a thank-you note after an interview that reinforces fit",
+    "follow_up": "follow up after silence without sounding anxious",
+    "accept_offer": "accept a job offer and confirm next steps",
+    "decline_offer": "decline a job offer graciously",
+}
+
+@app.post("/compose-reply/", dependencies=[Depends(rate_limit_expensive)])
+async def compose_reply(req: ReplyRequest):
+    """Reply to a recruiter or hiring-manager message with a specific intent."""
+    if len(req.their_message.strip()) < 20:
+        raise HTTPException(status_code=400, detail="Paste the message you are replying to")
+    intent = (req.intent or "").strip().lower()
+    if intent not in REPLY_INTENTS:
+        raise HTTPException(status_code=400, detail=f"intent must be one of: {', '.join(REPLY_INTENTS)}")
+    tone = (req.tone or "warm").strip().lower()
+    if tone not in {"warm", "formal", "brief"}:
+        tone = "warm"
+    return await _llm_json(
+        "You write replies to recruiters that sound like a real, composed professional. Short paragraphs, no filler, no exclamation-mark spam, no em dashes.",
+        f"""
+Write a reply.
+
+Goal: {REPLY_INTENTS[intent]}
+Tone: {tone}
+Candidate name: {req.your_name or "[Your name]"}
+Details to work in: {req.context or "none provided"}
+
+Message being replied to:
+{req.their_message[:3000]}
+
+Return JSON:
+{{
+  "subject": "reply subject line (or 'Re: ...' if appropriate)",
+  "reply": "the complete reply, ready to send, 60-160 words",
+  "alt_shorter": "a 2-3 sentence version for LinkedIn or chat",
+  "key_points_hit": ["what this reply accomplishes — max 4"],
+  "before_sending": ["2-3 things to double-check or personalise (names, dates, links)"],
+  "reply_timing": "one sentence on when to send this"
+}}
+""",
+        max_tokens=800, temperature=0.45, label="Reply composition",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AI CAREER CHATBOT  (Groq — free & fast)
 # ─────────────────────────────────────────────────────────────────────────────
 

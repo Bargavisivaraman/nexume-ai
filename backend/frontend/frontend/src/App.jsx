@@ -17,6 +17,13 @@ import { trackerToCsv } from "./lib/trackerStore";
 // state machine. Neither is needed to paint the landing hero.
 const JobsTab = lazy(() => import("./components/JobsTab"));
 const InterviewSimulator = lazy(() => import("./components/InterviewSimulator"));
+// AI Tools v2 share one chunk — a user opening one will likely try the others.
+const toolsV2 = () => import("./components/ToolsV2");
+const JDDecoderTool  = lazy(() => toolsV2().then(m => ({ default: m.JDDecoderTool })));
+const StarStoryTool  = lazy(() => toolsV2().then(m => ({ default: m.StarStoryTool })));
+const PitchTool      = lazy(() => toolsV2().then(m => ({ default: m.PitchTool })));
+const NegotiatorTool = lazy(() => toolsV2().then(m => ({ default: m.NegotiatorTool })));
+const ReplyTool      = lazy(() => toolsV2().then(m => ({ default: m.ReplyTool })));
 
 // Sort indicator for the tracker table (module-level so React state survives re-renders)
 function SortIcon({ col, sortBy, sortDir }) {
@@ -989,32 +996,49 @@ function TrackerPage() {
 }
 
 // ── AI TOOLS PAGE ─────────────────────────────────────────────────────────────
-function ToolsPage() {
-  const [activeTool, setActiveTool] = useState("linkedin");
-  const tools = [
-    { id: "linkedin", icon: "🔗", label: "LinkedIn", desc: "Optimize your profile" },
-    { id: "email",    icon: "📧", label: "Cold Email", desc: "Write outreach emails" },
+const TOOL_GROUPS = [
+  { label: "Before you apply", tools: [
+    { id: "jd",       icon: "🧩", label: "JD Decoder", desc: "What they really want" },
     { id: "skillgap", icon: "📊", label: "Skill Gap", desc: "Find what's missing" },
     { id: "salary",   icon: "💰", label: "Salary", desc: "Estimate your worth" },
-  ];
+  ]},
+  { label: "Get noticed", tools: [
+    { id: "linkedin", icon: "🔗", label: "LinkedIn", desc: "Optimize your profile" },
+    { id: "pitch",    icon: "🎤", label: "Elevator Pitch", desc: "Tell me about yourself" },
+    { id: "email",    icon: "📧", label: "Cold Email", desc: "Write outreach emails" },
+  ]},
+  { label: "Interview & offer", tools: [
+    { id: "star",     icon: "⭐", label: "STAR Stories", desc: "Behavioural answers" },
+    { id: "reply",    icon: "💬", label: "Reply Composer", desc: "Answer recruiters" },
+    { id: "offer",    icon: "🤝", label: "Offer Negotiator", desc: "Counter with confidence" },
+  ]},
+];
+
+function ToolsPage() {
+  const [activeTool, setActiveTool] = useState("jd");
 
   return (
     <div className="tools-page">
       <div className="page-banner">
         <h2>⚡ AI Tools</h2>
-        <p>LinkedIn optimizer, cold email generator, skill gap analysis & salary estimator</p>
+        <p>Nine tools for every stage: decode the JD, close the skill gap, pitch yourself, ace the interview, and negotiate the offer</p>
       </div>
       <div className="tools-layout">
         {/* Sidebar */}
         <div className="tools-sidebar">
-          {tools.map(t => (
-            <button key={t.id} className={`tool-nav-btn ${activeTool === t.id ? "active" : ""}`} onClick={() => setActiveTool(t.id)}>
-              <span className="tool-nav-icon">{t.icon}</span>
-              <div>
-                <div className="tool-nav-label">{t.label}</div>
-                <div className="tool-nav-desc">{t.desc}</div>
-              </div>
-            </button>
+          {TOOL_GROUPS.map(g => (
+            <div key={g.label} className="tool-nav-group">
+              <div className="tool-nav-group-label">{g.label}</div>
+              {g.tools.map(t => (
+                <button key={t.id} className={`tool-nav-btn ${activeTool === t.id ? "active" : ""}`} onClick={() => setActiveTool(t.id)}>
+                  <span className="tool-nav-icon">{t.icon}</span>
+                  <div>
+                    <div className="tool-nav-label">{t.label}</div>
+                    <div className="tool-nav-desc">{t.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
           ))}
         </div>
         {/* Main content */}
@@ -1023,6 +1047,15 @@ function ToolsPage() {
           {activeTool === "email"     && <ColdEmailTool />}
           {activeTool === "skillgap"  && <SkillGapTool />}
           {activeTool === "salary"    && <SalaryTool />}
+          {["jd", "star", "pitch", "offer", "reply"].includes(activeTool) && (
+            <Suspense fallback={<TabLoading />}>
+              {activeTool === "jd"    && <JDDecoderTool />}
+              {activeTool === "star"  && <StarStoryTool />}
+              {activeTool === "pitch" && <PitchTool />}
+              {activeTool === "offer" && <NegotiatorTool />}
+              {activeTool === "reply" && <ReplyTool />}
+            </Suspense>
+          )}
         </div>
       </div>
     </div>
