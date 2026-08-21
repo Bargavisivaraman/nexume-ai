@@ -1055,9 +1055,11 @@ async def jobs_stats():
         now = datetime.now(timezone.utc)
         one_hour_ago = (now - timedelta(hours=1)).isoformat()
 
+        # The UI only browses the US feed, so the headline number must be the
+        # US count — the corpus also holds foreign rows users never see.
         total = (
             supabase.table("jobs").select("job_id", count="exact")
-            .eq("is_active", True).limit(1).execute().count
+            .eq("is_active", True).eq("country", "US").limit(1).execute().count
         ) or 0
 
         latest = (
@@ -1080,7 +1082,7 @@ async def jobs_stats():
             posted_today = (
                 supabase.table("jobs").select("job_id", count="exact")
                 .gte("posted_at", twenty_four_ago)
-                .eq("is_active", True)
+                .eq("is_active", True).eq("country", "US")
                 .limit(1).execute().count
             ) or 0
         except Exception:
