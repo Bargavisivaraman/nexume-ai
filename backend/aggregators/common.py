@@ -185,11 +185,21 @@ COUNTRY_ALIASES = {
     "korea":"KR","china":"CN","hong kong":"HK","taiwan":"TW","australia":"AU","new zealand":"NZ",
     "brazil":"BR","brasil":"BR","mexico":"MX","méxico":"MX","argentina":"AR","colombia":"CO","chile":"CL",
     "peru":"PE","uruguay":"UY","costa rica":"CR","south africa":"ZA","nigeria":"NG","kenya":"KE","egypt":"EG",
+    # ISO-3 codes some boards use ("Ontario, CAN"). Short aliases only match as
+    # a whole comma-part or in upper case — see parse_location.
+    "can":"CA","gbr":"GB","deu":"DE","ind":"IN","aus":"AU","fra":"FR","jpn":"JP","sgp":"SG","irl":"IE",
+    "nld":"NL","mex":"MX","bra":"BR","esp":"ES","che":"CH","swe":"SE","pol":"PL","ita":"IT","kor":"KR",
+    "are":"AE","isr":"IL","nzl":"NZ","prt":"PT","bel":"BE","aut":"AT","dnk":"DK","nor":"NO","fin":"FI",
 }
 
 # Major non-US hiring cities that ATS boards list bare ("London", "Toronto").
 # Only unambiguous ones — anything that collides with a US city name is omitted.
 CITY_COUNTRY = {
+    # Regions / provinces that boards list instead of a country
+    "ontario":"CA","british columbia":"CA","alberta":"CA","quebec":"CA","nova scotia":"CA","manitoba":"CA",
+    "karnataka":"IN","maharashtra":"IN","telangana":"IN","tamil nadu":"IN","haryana":"IN","uttar pradesh":"IN",
+    "bavaria":"DE","bayern":"DE","catalonia":"ES","cataluña":"ES","new south wales":"AU","queensland":"AU",
+    "greater london":"GB","west midlands":"GB","leinster":"IE",
     # UK / Ireland
     "london":"GB","manchester":"GB","edinburgh":"GB","glasgow":"GB","bristol":"GB","leeds":"GB",
     "birmingham, uk":"GB","belfast":"GB","dublin":"IE","cork":"IE",
@@ -265,7 +275,7 @@ def parse_location(loc_str: Optional[str], default_country: str = "US") -> tuple
         m = _COUNTRY_ALIAS_RE.search(raw)
         # Bare "us"/"uk" only count when they stand as their own part or are
         # upper-case, so "Austin, TX" ("us" inside "Austin") can't match.
-        if m and (len(m.group(1)) > 2 or m.group(1).isupper() or m.group(1).lower() in lowered):
+        if m and (len(m.group(1)) > 3 or m.group(1).isupper() or m.group(1).lower() in lowered):
             country = COUNTRY_ALIASES[m.group(1).lower()]
 
     # 2. US state as a part. Two-letter codes win over names so "Washington, DC"
