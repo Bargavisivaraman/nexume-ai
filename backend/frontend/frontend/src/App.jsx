@@ -115,6 +115,15 @@ function InterviewPage({ prefillTitle, prefillCompany }) {
     }
   };
 
+  // Stop any still-running voice recorders when the tab unmounts — otherwise
+  // the mic stays hot and keeps transcribing into dead state.
+  useEffect(() => {
+    const refs = recognitionRefs.current;
+    return () => {
+      Object.values(refs).forEach(r => { try { r?.stop(); } catch { /* already stopped */ } });
+    };
+  }, []);
+
   const typeColors = { technical: "#0a84ff", behavioral: "#30d158", situational: "#ffd60a", culture: "#bf5af2" };
   const scoreColor = (s) => s >= 80 ? "#30d158" : s >= 60 ? "#ffd60a" : "#ff453a";
 
@@ -1386,11 +1395,16 @@ function App() {
   }, []);
 
   const switchTab = useCallback((newTab) => {
-    const oldIdx = TAB_ORDER.indexOf(tabRef.current);
+    const oldTab = tabRef.current;
+    const oldIdx = TAB_ORDER.indexOf(oldTab);
     const newIdx = TAB_ORDER.indexOf(newTab);
     setTransDir(newIdx >= oldIdx ? "forward" : "backward");
     tabRef.current = newTab;
     setTab(newTab);
+    // Prefills are one-shot hand-offs from the Jobs tab. Drop them once their
+    // tab is left so a later fresh visit doesn't resurrect a stale JD.
+    if (oldTab === "cover" && newTab !== "cover") setCoverPrefill(null);
+    if (oldTab === "tools" && newTab !== "tools") setToolsPrefill(null);
   }, []);
 
   const setTheme = (t) => {

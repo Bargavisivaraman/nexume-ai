@@ -82,7 +82,9 @@ const List = ({ items, color = "#bb86fc", render }) =>
     </div>
   ) : null;
 
-const Section = ({ title, children }) => (children ? <><div className="tool-result-title">{title}</div>{children}</> : null);
+// `children` is a React element and therefore always truthy — callers pass
+// `show` (usually `items?.length > 0`) so empty results don't leave orphan headings.
+const Section = ({ title, show = true, children }) => (show ? <><div className="tool-result-title">{title}</div>{children}</> : null);
 
 const Picker = ({ options, value, onChange }) => (
   <div className="tone-picker">
@@ -152,22 +154,22 @@ export function JDDecoderTool({ prefill }) {
             {r.comp_transparency && <span className={`tag-pill tag-${SIGNAL_TONE[r.comp_transparency] || "red"}`}>Pay: {r.comp_transparency}</span>}
           </div>
           {r.sponsorship_note && <div style={{ fontSize: 12.5, color: "var(--text-dim)", marginTop: -10, marginBottom: 16 }}>{r.sponsorship_note}</div>}
-          <Section title="Must-haves (screener will reject on these)"><Pills items={r.must_haves} tone="red" /></Section>
-          <Section title="Nice-to-haves (negotiable)"><Pills items={r.nice_to_haves} tone="blue" /></Section>
-          <Section title="Hidden expectations"><List items={r.hidden_expectations} color="#ffd60a" /></Section>
+          <Section title="Must-haves (screener will reject on these)" show={r.must_haves?.length > 0}><Pills items={r.must_haves} tone="red" /></Section>
+          <Section title="Nice-to-haves (negotiable)" show={r.nice_to_haves?.length > 0}><Pills items={r.nice_to_haves} tone="blue" /></Section>
+          <Section title="Hidden expectations" show={r.hidden_expectations?.length > 0}><List items={r.hidden_expectations} color="#ffd60a" /></Section>
           {r.red_flags?.length > 0 && (
             <Section title="Red flags 🚩">
               <List items={r.red_flags} color="#ff453a" render={f => <><strong style={{ color: "var(--text)" }}>{f.flag}</strong><br /><span style={{ fontSize: 12.5 }}>{f.why}</span></>} />
             </Section>
           )}
-          <Section title="Green flags ✓"><List items={r.green_flags} color="#30d158" /></Section>
+          <Section title="Green flags ✓" show={r.green_flags?.length > 0}><List items={r.green_flags} color="#30d158" /></Section>
           {r.keywords_for_resume?.length > 0 && (
             <Section title="Keywords to mirror on your resume">
               <Pills items={r.keywords_for_resume} tone="purple" />
               <button className="tone-btn" style={{ marginTop: -6, marginBottom: 14 }} onClick={() => copy(r.keywords_for_resume.join(", "), "kw")}>{copied === "kw" ? "✓ Copied" : "Copy all keywords"}</button>
             </Section>
           )}
-          <Section title="Questions to ask them"><List items={r.questions_to_ask} color="#60a5fa" /></Section>
+          <Section title="Questions to ask them" show={r.questions_to_ask?.length > 0}><List items={r.questions_to_ask} color="#60a5fa" /></Section>
           {r.fit_notes?.length > 0 && <Section title="How you fit"><List items={r.fit_notes} color="#bb86fc" /></Section>}
         </div>
       )}
@@ -224,15 +226,15 @@ export function StarStoryTool() {
             <Picker options={[{ id: "30s", label: "30 seconds" }, { id: "90s", label: "90 seconds" }]} value={version} onChange={setVersion} />
             <CopyBox style={{ marginTop: 12, marginBottom: 16 }} id={version} copied={copied} copy={copy} text={version === "30s" ? r.version_30s : r.version_90s} />
           </Section>
-          <Section title="Competencies this shows"><Pills items={r.competencies_shown} tone="green" /></Section>
-          <Section title="Use it to answer"><List items={r.answers_questions} color="#60a5fa" /></Section>
+          <Section title="Competencies this shows" show={r.competencies_shown?.length > 0}><Pills items={r.competencies_shown} tone="green" /></Section>
+          <Section title="Use it to answer" show={r.answers_questions?.length > 0}><List items={r.answers_questions} color="#60a5fa" /></Section>
           {r.likely_follow_ups?.length > 0 && (
             <Section title="Likely follow-ups">
               <List items={r.likely_follow_ups} color="#ffd60a" render={f => <><strong style={{ color: "var(--text)" }}>{f.question}</strong><br /><span style={{ fontSize: 12.5 }}>{f.how_to_answer}</span></>} />
             </Section>
           )}
-          <Section title="Fill these in to make it stronger"><List items={r.missing_details} color="#ff9f0a" /></Section>
-          <Section title="Honest critique"><List items={r.weak_spots} color="#ff453a" /></Section>
+          <Section title="Fill these in to make it stronger" show={r.missing_details?.length > 0}><List items={r.missing_details} color="#ff9f0a" /></Section>
+          <Section title="Honest critique" show={r.weak_spots?.length > 0}><List items={r.weak_spots} color="#ff453a" /></Section>
         </div>
       )}
     </div>
@@ -290,9 +292,9 @@ export function PitchTool() {
               )} />
             </Section>
           )}
-          <Section title="Proof points it leans on"><Pills items={r.proof_points} tone="green" /></Section>
-          <Section title="Don't say"><List items={r.avoid} color="#ff453a" /></Section>
-          <Section title="Delivery tips"><List items={r.delivery_tips} color="#ffd60a" /></Section>
+          <Section title="Proof points it leans on" show={r.proof_points?.length > 0}><Pills items={r.proof_points} tone="green" /></Section>
+          <Section title="Don't say" show={r.avoid?.length > 0}><List items={r.avoid} color="#ff453a" /></Section>
+          <Section title="Delivery tips" show={r.delivery_tips?.length > 0}><List items={r.delivery_tips} color="#ffd60a" /></Section>
         </div>
       )}
     </div>
@@ -381,9 +383,9 @@ export function NegotiatorTool() {
               <List items={r.phone_script} color="#60a5fa" render={(line) => line} />
             </Section>
           )}
-          <Section title="If base is firm, ask for"><List items={r.if_they_say_no} color="#ffd60a" /></Section>
-          <Section title="Mistakes to avoid"><List items={r.mistakes_to_avoid} color="#ff453a" /></Section>
-          <Section title="Clarify before you sign"><List items={r.questions_to_ask} color="#bb86fc" /></Section>
+          <Section title="If base is firm, ask for" show={r.if_they_say_no?.length > 0}><List items={r.if_they_say_no} color="#ffd60a" /></Section>
+          <Section title="Mistakes to avoid" show={r.mistakes_to_avoid?.length > 0}><List items={r.mistakes_to_avoid} color="#ff453a" /></Section>
+          <Section title="Clarify before you sign" show={r.questions_to_ask?.length > 0}><List items={r.questions_to_ask} color="#bb86fc" /></Section>
         </div>
       )}
     </div>
@@ -434,8 +436,8 @@ export function ReplyTool() {
         <div className="tool-result">
           <Section title="Reply"><CopyBox id="reply" copied={copied} copy={copy} subject={r.subject} text={r.reply} style={{ marginBottom: 16 }} /></Section>
           {r.alt_shorter && <Section title="Short version (LinkedIn / chat)"><CopyBox id="short" copied={copied} copy={copy} text={r.alt_shorter} style={{ marginBottom: 16 }} /></Section>}
-          <Section title="What this accomplishes"><Pills items={r.key_points_hit} tone="green" /></Section>
-          <Section title="Before you send"><List items={r.before_sending} color="#ffd60a" /></Section>
+          <Section title="What this accomplishes" show={r.key_points_hit?.length > 0}><Pills items={r.key_points_hit} tone="green" /></Section>
+          <Section title="Before you send" show={r.before_sending?.length > 0}><List items={r.before_sending} color="#ffd60a" /></Section>
           {r.reply_timing && <div style={{ fontSize: 13, color: "var(--text-dim)" }}>⏱ {r.reply_timing}</div>}
         </div>
       )}
