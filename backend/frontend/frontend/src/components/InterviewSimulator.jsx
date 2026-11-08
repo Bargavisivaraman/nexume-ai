@@ -139,6 +139,10 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   const interruptedRef     = useRef(false);
   const ttsControllersRef  = useRef([]);    // AbortController per pending TTS fetch
   const audioPlayingRef    = useRef(null);  // currently playing <Audio> instance
+  // Lifecycle: false once unmounted so in-flight turns can't restart audio/mic
+  const aliveRef           = useRef(true);
+  const turnAbortRef       = useRef(null);  // AbortController for the current /interview-turn/ fetch
+  const endedRef           = useRef(false); // set the instant the user ends the interview
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { historyRef.current = history; }, [history]);
@@ -219,9 +223,13 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
         const audio = new Audio(url);
         audioPlayingRef.current = audio;
         audioRef.current = audio;
-        audio.onended  = () => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
-        audio.onerror  = ()   => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
-        audio.play().catch(() => resolve());
+        const done = () => { URL.revokeObjectURL(url); audioPlayingRef.current = null; resolve(); };
+        audio.onended  = done;
+        audio.onerror  = done;
+        // interruptAI()/endInterview() pause the audio — without this the
+        // sentence promise never settled and the interview froze "speaking".
+        audio.onpause  = done;
+        audio.play().catch(done);
       });
     }
 
@@ -300,6 +308,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   }, []);
 
   const startListening = useCallback(() => {
+    if (!aliveRef.current) return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       setError("Voice recognition isn't supported in this browser. Use Chrome.");
@@ -310,6 +319,8 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     setPhase("listening");
     setInterim("");
     lastFinalRef.current = "";
+    // A silence timer armed by a previous turn must not fire into this one.
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     startRecording(); // capture accurate audio alongside the browser recognizer
 
     const rec = new SR();
@@ -318,6 +329,9 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     rec.lang = "en-US";
 
     rec.onresult = (event) => {
+      // Chrome flushes a final result after rec.stop(); ignore anything from
+      // a recognizer that's no longer the active one (ghost/duplicate answers).
+      if (recognitionRef.current !== rec) return;
       let interimStr = "";
       let finalStr = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -339,6 +353,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = setTimeout(() => {
+        if (phaseRef.current !== "listening") return; // answer already submitted/ended
         if (utterance.length >= 2) {
           try { rec.stop(); } catch { /* recognizer already stopped */ }
           handleUserSpoke(utterance);
@@ -379,6 +394,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   // Core: given the candidate's final answer text, append it, get the AI's
   // reply, speak it, and continue the loop. Shared by voice + typed answers.
   const sendAnswer = useCallback(async (finalText) => {
+    if (!aliveRef.current) return;
     const newHistory = [...historyRef.current, { role: "user", content: finalText }];
     setHistory(newHistory);
     setInterim("");
@@ -387,6 +403,8 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
     setStatusMsg("Thinking…");
 
     try {
+      const controller = new AbortController();
+      turnAbortRef.current = controller;
       const res = await fetch(`${API}/interview-turn/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -399,16 +417,20 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
           target_company: targetCompany,
           is_start: false,
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server error ${res.status}`);
       }
       const data = await res.json();
+      if (!aliveRef.current) return; // unmounted while the turn was in flight
       const aiText = data.message || "Could you tell me more?";
       const withAi = [...newHistory, { role: "ai", content: aiText }];
       setHistory(withAi);
       await speak(aiText);
+      // Unmounted or manually ended mid-speech → don't restart the mic.
+      if (!aliveRef.current || endedRef.current) return;
 
       if (data.should_end) {
         endInterview(withAi);
@@ -416,6 +438,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
         startListening();
       }
     } catch (e) {
+      if (!aliveRef.current || e.name === "AbortError") return;
       setError(e.message || "Conversation interrupted.");
       setPhase("ended");
     }
@@ -464,6 +487,7 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
 
   // ── Start / End ──────────────────────────────────────────────────────────
   const startInterview = useCallback(async () => {
+    endedRef.current = false;
     setError(null);
     setHistory([]);
     setSummary(null);
@@ -482,7 +506,10 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       console.warn("[getUserMedia] accurate STT disabled, using browser only:", e);
     }
 
+    if (!aliveRef.current) return;
     try {
+      const controller = new AbortController();
+      turnAbortRef.current = controller;
       const res = await fetch(`${API}/interview-turn/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -495,17 +522,22 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
           target_company: targetCompany,
           is_start: true,
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server error ${res.status}`);
       }
       const data = await res.json();
+      if (!aliveRef.current) return; // unmounted while the opener was in flight
       const aiText = data.message || "Hi! Let's get started — could you walk me through your background?";
       setHistory([{ role: "ai", content: aiText }]);
       await speak(aiText);
+      // Unmounted or manually ended mid-speech → don't start the mic.
+      if (!aliveRef.current || endedRef.current) return;
       startListening();
     } catch (e) {
+      if (!aliveRef.current || e.name === "AbortError") return;
       setError(e.message || "Couldn't start the interview. Try again.");
       setPhase("setup");
     }
@@ -521,9 +553,10 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
   }, []);
 
   const endInterview = useCallback(async (finalHistory) => {
+    endedRef.current = true; // block any in-flight turn from restarting the mic
+    interruptAI(); // stop current audio, pending TTS fetches, and browser speech
     stopListening();
     releaseMic();
-    try { audioRef.current?.pause(); } catch { /* best effort */ }
     setPhase("ended");
     setStatusMsg("Scoring your interview…");
 
@@ -572,17 +605,19 @@ export default function InterviewSimulator({ prefillTitle = "", prefillCompany =
       setError(e.message || "Couldn't generate summary.");
       setPhase("ended");
     }
-  }, [mode, targetRole, targetCompany, stopListening, releaseMic]);
+  }, [mode, targetRole, targetCompany, interruptAI, stopListening, releaseMic]);
 
   // ── Cleanup ──────────────────────────────────────────────────────────────
   useEffect(() => {
+    aliveRef.current = true;
     return () => {
+      aliveRef.current = false;
+      try { turnAbortRef.current?.abort(); } catch { /* already settled */ }
+      interruptAI(); // aborts TTS fetches, pauses audio, cancels browser speech
       stopListening();
       releaseMic();
-      try { audioRef.current?.pause(); } catch { /* best effort */ }
-      try { speechSynthesis.cancel(); } catch { /* not speaking */ }
     };
-  }, [stopListening, releaseMic]);
+  }, [interruptAI, stopListening, releaseMic]);
 
   // Force voices to load (some browsers lazy-load)
   useEffect(() => {
