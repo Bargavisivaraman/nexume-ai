@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import useSavedJobs from './useSavedJobs'
 
 beforeEach(() => localStorage.clear())
@@ -41,5 +41,21 @@ describe('useSavedJobs', () => {
     act(() => result.current.toggleSave({ job_id: 'j2' }))
     const stored = JSON.parse(localStorage.getItem('nexume_saved_jobs'))
     expect(stored.some((j) => j.job_id === 'j2')).toBe(true)
+  })
+
+  it('removes both window listeners on unmount (no leak per mount)', () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const { unmount } = renderHook(() => useSavedJobs())
+    unmount()
+    for (const evt of ['storage', 'nexume_saved_jobs_change']) {
+      const added = add.mock.calls.filter((c) => c[0] === evt)
+      const removed = remove.mock.calls.filter((c) => c[0] === evt)
+      expect(removed.length).toBe(added.length)
+      // the exact handler that was added must be the one removed
+      expect(removed.map((c) => c[1])).toEqual(added.map((c) => c[1]))
+    }
+    add.mockRestore()
+    remove.mockRestore()
   })
 })

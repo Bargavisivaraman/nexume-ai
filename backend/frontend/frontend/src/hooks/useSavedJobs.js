@@ -23,11 +23,13 @@ export default function useSavedJobs() {
 
   useEffect(() => {
     const onChange = () => setSaved(read());
+    const onStorage = (e) => { if (e.key === STORAGE_KEY) onChange(); };
     window.addEventListener("nexume_saved_jobs_change", onChange);
-    window.addEventListener("storage", (e) => {
-      if (e.key === STORAGE_KEY) onChange();
-    });
-    return () => window.removeEventListener("nexume_saved_jobs_change", onChange);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("nexume_saved_jobs_change", onChange);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
   const persist = useCallback((next) => {

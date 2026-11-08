@@ -106,6 +106,11 @@ describe("similarJobs", () => {
     expect(similarJobs(null, pool)).toEqual([]);
     expect(similarJobs(target, [])).toEqual([]);
   });
+  it("tolerates non-string tech_stack entries on the opened job", () => {
+    const weird = job({ job_id: "w", title: "Backend Engineer", tech_stack: ["Python", 42, null] });
+    expect(() => similarJobs(weird, pool)).not.toThrow();
+    expect(similarJobs(weird, pool).map(j => j.job_id)).toContain("3");
+  });
 });
 
 describe("skillChips", () => {

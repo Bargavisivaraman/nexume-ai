@@ -100,7 +100,7 @@ const tokens = (s) => new Set((s || "").toLowerCase().replace(/[^a-z0-9+#. ]/g, 
 export function similarJobs(job, pool, n = 4) {
   if (!job) return [];
   const t = tokens(job.title);
-  const stack = new Set(Array.isArray(job.tech_stack) ? job.tech_stack.map(s => s.toLowerCase()) : []);
+  const stack = new Set(Array.isArray(job.tech_stack) ? job.tech_stack.map(s => String(s).toLowerCase()) : []);
   const scored = [];
   for (const other of pool || []) {
     if (!other || other.job_id === job.job_id) continue;

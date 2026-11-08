@@ -75,6 +75,9 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
   const nudgeTimer = useRef(null);
 
   // Deep link: /?job=<id> opens the drawer even when the job isn't in the list.
+  // While the initial lookup is in flight the URL-sync effect must not strip
+  // ?job= — otherwise a 404 (or slow fetch) destroys the shared URL.
+  const pendingDeepLink = useRef(new URLSearchParams(window.location.search).has("job"));
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("job");
     if (!id) return;
@@ -89,6 +92,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
         const data = await res.json();
         if (!cancelled && data?.job) setSelectedJob(data.job);
       } catch { /* ignore — the list still loads normally */ }
+      finally { pendingDeepLink.current = false; }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,6 +103,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
     const u = new URL(window.location.href);
     if (selectedJob?.job_id) u.searchParams.set("job", selectedJob.job_id);
     else if (!u.searchParams.has("job")) return;
+    else if (pendingDeepLink.current) return; // lookup still resolving — keep the shared URL
     else u.searchParams.delete("job");
     window.history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
   }, [selectedJob]);
@@ -164,7 +169,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
       if (f.remote)              params.set("remote", "true");
       if (f.stateFilter.trim())  params.set("state_filter", f.stateFilter.trim());
       const res = await fetchWithRetry(`${API}/jobs/?${params}`, controller.signal);
-      if (!res || controller.signal.aborted) return;
+      if (!res || controller.signal.aborted) return null;
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `Server error ${res.status}`);
@@ -184,15 +189,21 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
       setHasMore(data.has_more === true);
       setBackupMode(data.supabase_offline === true);
       setPage(pg);
+      return data.jobs || [];
     } catch (e) {
-      if (e.name === "AbortError") return;
+      if (e.name === "AbortError") return null;
       const isColdStart = e.message.toLowerCase().includes("fetch") ||
                           e.message.toLowerCase().includes("network") ||
                           e.message.toLowerCase().includes("failed");
       setError(isColdStart ? "cold_start" : e.message);
+      return null;
     } finally {
-      setRetryMsg(null);
-      setLoading(false);
+      // Only the newest fetch owns the loading state — an aborted fetch's
+      // finally must not clear the spinner out from under its replacement.
+      if (abortRef.current === controller) {
+        setRetryMsg(null);
+        setLoading(false);
+      }
     }
   }, [filters, locationQuery, activeSector, activeMajor, activeRole, fetchWithRetry]);
 
@@ -312,8 +323,10 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
     });
   })();
 
+  // Jobs the role/major matcher dropped — the date filter (step 3) is a
+  // user-chosen filter, not an "off-target" signal, so it doesn't count here.
   const filteredOutCount = (pickedRole || activeMajorData)
-    ? salaryFiltered.length - visibleJobs.length
+    ? salaryFiltered.length - roleFiltered.length
     : 0;
 
   // Step 4: drop hidden jobs (unless the user asked to see them), then sort.
@@ -365,14 +378,13 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
     setActiveRole(s.roleId || null);
     setViewMode("all");
     setNewSince(null);
-    await fetchJobs(country, s.query || "", 1, f, s.sectorId || null, s.majorId || null, s.roleId || null);
-    // fetchJobs stored page-1 results in sessionStorage; count what's newer than the last visit.
-    try {
-      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || "null");
-      const fresh = countNewSince(cached?.jobs || [], s.lastSeenAt);
-      setNewSince({ count: fresh, since: s.lastSeenAt, label: describeSearch(s, searchLabels(s)) });
-      setSavedSearches(list => touchSearch(list, s.id, { resultCount: cached?.jobs?.length ?? s.lastCount }));
-    } catch { /* ignore */ }
+    const fetched = await fetchJobs(country, s.query || "", 1, f, s.sectorId || null, s.majorId || null, s.roleId || null);
+    // Only a successful fetch counts as a "visit": a failed/aborted run must
+    // not report "N new" from stale data or stamp lastSeenAt.
+    if (!fetched) return;
+    const fresh = countNewSince(fetched, s.lastSeenAt);
+    setNewSince({ count: fresh, since: s.lastSeenAt, label: describeSearch(s, searchLabels(s)) });
+    setSavedSearches(list => touchSearch(list, s.id, { resultCount: fetched.length }));
   };
   const searchLabels = (s) => {
     const major = s.majorId ? MAJOR_BY_ID[s.majorId] : null;
@@ -387,14 +399,14 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
       const n = displayJobs.length;
       if (!n) return;
       const key = e.key;
-      if (key === "j" || key === "ArrowDown" && !selectedJob) {
+      if (key === "j" || key === "ArrowDown") {
         e.preventDefault();
         setCursor(c => {
           const next = Math.min(n - 1, c + 1);
           if (selectedJob) setSelectedJob(displayJobs[next]);
           return next;
         });
-      } else if (key === "k" || key === "ArrowUp" && !selectedJob) {
+      } else if (key === "k" || key === "ArrowUp") {
         e.preventDefault();
         setCursor(c => {
           const next = Math.max(0, c - 1);
@@ -403,10 +415,12 @@ export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) 
         });
       } else if ((key === "Enter" || key === "o") && cursor >= 0 && !selectedJob) {
         e.preventDefault(); setSelectedJob(displayJobs[cursor]);
-      } else if (key === "s" && cursor >= 0) {
-        e.preventDefault(); toggleSave(displayJobs[cursor]);
-      } else if (key === "h" && cursor >= 0) {
-        e.preventDefault(); hideOne(displayJobs[cursor]);
+      } else if (key === "s" && (selectedJob || cursor >= 0)) {
+        // With the drawer open, act on the job the user is looking at — the
+        // cursor can be -1 (deep link) or elsewhere (similar-job navigation).
+        e.preventDefault(); toggleSave(selectedJob || displayJobs[cursor]);
+      } else if (key === "h" && (selectedJob || cursor >= 0)) {
+        e.preventDefault(); hideOne(selectedJob || displayJobs[cursor]);
       } else if (key === "Escape") {
         setSelectedJob(null); setApplyNudge(null);
       }
