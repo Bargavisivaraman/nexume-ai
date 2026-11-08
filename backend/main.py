@@ -1168,6 +1168,27 @@ async def ingest_ats(tier: Optional[str] = Query(None, description="tier1 | tier
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{3,200}$")
+
+# Declared after every static /jobs/... route so it can't shadow /jobs/stats etc.
+@app.get("/jobs/{job_id}", dependencies=[Depends(rate_limit_read)])
+async def get_job(job_id: str):
+    """Single job by id — powers shareable deep links (?job=<id>)."""
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        rows = (
+            await asyncio.to_thread(
+                lambda: supabase.table("jobs").select("*").eq("job_id", job_id).limit(1).execute()
+            )
+        ).data or []
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Job lookup unavailable: {e}")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": rows[0]}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — WAITLIST
 # ─────────────────────────────────────────────────────────────────────────────
