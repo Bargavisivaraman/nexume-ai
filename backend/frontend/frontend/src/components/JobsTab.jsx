@@ -19,16 +19,26 @@ import { loadTracker, addJobToTracker, isJobTracked } from "../lib/trackerStore"
 import { makeFetchWithRetry } from "../lib/fetchRetry";
 import { SECTOR_BY_ID } from "../data/sectors";
 import { MAJOR_BY_ID } from "../data/majors";
+import { sortJobs, SORT_MODES, salaryInsights, sponsorshipSignal, skillChips, formatK } from "../lib/jobInsights";
+import { loadHidden, hideJob, unhideJob } from "../lib/hiddenJobs";
+import { loadSavedSearches, saveSearch, removeSearch, touchSearch, countNewSince, describeSearch, searchKey } from "../lib/savedSearches";
+import JobDetailDrawer from "./JobDetailDrawer";
 
 import { API } from "../lib/api";
 
 const CACHE_KEY = "nexume_jobs_cache_v2";
 const CACHE_TTL = 5 * 60 * 1000;
+const DEFAULT_FILTERS = { jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "", internship: false, newGrad: false };
+
+const isTypingTarget = (el) => {
+  const tag = el?.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Jobs Tab
 // ─────────────────────────────────────────────────────────────────────────────
-export default function JobsTab({ onPrepInterview, onCoverLetter }) {
+export default function JobsTab({ onPrepInterview, onCoverLetter, onDecodeJD }) {
   const [country]                         = useState("US");
   const [query, setQuery]                 = useState("");
   // Application-tracker integration: one-click "Track" from any job card
@@ -44,17 +54,54 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
   const [retryMsg, setRetryMsg]           = useState(null);
   const [page, setPage]                   = useState(1);
   const [hasMore, setHasMore]             = useState(false);
-  const [expanded, setExpanded]           = useState(null);
   const [viewMode, setViewMode]           = useState("all"); // "all" | "saved"
-  const [filters, setFilters] = useState({
-    jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "",
-    internship: false, newGrad: false,
-  });
+  const [filters, setFilters] = useState({ ...DEFAULT_FILTERS });
   const [salary, setSalary] = useState([0, 400000]);
   const abortRef = useRef(null);
   const { saved, isSaved, toggleSave } = useSavedJobs();
   const resumeKeywords = useRef(getResumeKeywords());
   useEffect(() => { resumeKeywords.current = getResumeKeywords(); }, []);
+
+  // ── "runaway" features: sort, hide, saved searches, drawer, keyboard ────
+  const [sortMode, setSortMode]           = useState(() => (getResumeKeywords() ? "match" : "newest"));
+  const [hidden, setHidden]               = useState(loadHidden);
+  const [showHidden, setShowHidden]       = useState(false);
+  const [selectedJob, setSelectedJob]     = useState(null);
+  const [cursor, setCursor]               = useState(-1);          // keyboard-highlighted card index
+  const [savedSearches, setSavedSearches] = useState(loadSavedSearches);
+  const [newSince, setNewSince]           = useState(null);        // { count, since } banner after running a saved search
+  const [applyNudge, setApplyNudge]       = useState(null);        // job the user just clicked "Apply" on
+  const listRef = useRef(null);
+  const nudgeTimer = useRef(null);
+
+  // Deep link: /?job=<id> opens the drawer even when the job isn't in the list.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("job");
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || "null");
+        const local = cached?.jobs?.find(j => j.job_id === id) || saved.find(j => j.job_id === id);
+        if (local) { if (!cancelled) setSelectedJob(local); return; }
+        const res = await fetch(`${API}/jobs/${encodeURIComponent(id)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.job) setSelectedJob(data.job);
+      } catch { /* ignore — the list still loads normally */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the URL shareable while a job is open; drop the param when closed.
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    if (selectedJob?.job_id) u.searchParams.set("job", selectedJob.job_id);
+    else if (!u.searchParams.has("job")) return;
+    else u.searchParams.delete("job");
+    window.history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
+  }, [selectedJob]);
 
   // ── load cache ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -174,20 +221,17 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
 
   const pickSector = (sectorId) => {
     setActiveSector(sectorId);
-    setExpanded(null);
     fetchJobs(country, query, 1, filters, sectorId, activeMajor, activeRole);
   };
 
   const pickMajor = (majorId) => {
     setActiveMajor(majorId);
     setActiveRole(null);
-    setExpanded(null);
     fetchJobs(country, query, 1, filters, activeSector, majorId, null);
   };
 
   const pickRole = (roleId) => {
     setActiveRole(roleId);
-    setExpanded(null);
     fetchJobs(country, query, 1, filters, activeSector, activeMajor, roleId);
   };
 
@@ -200,7 +244,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
   };
 
   const clearFilters = () => {
-    const reset = { jobType: "", expLevel: "", dateRange: "all", remote: false, stateFilter: "", internship: false, newGrad: false };
+    const reset = { ...DEFAULT_FILTERS };
     setFilters(reset);
     setActiveSector(null);
     setActiveMajor(null);
@@ -272,9 +316,113 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
     ? salaryFiltered.length - visibleJobs.length
     : 0;
 
+  // Step 4: drop hidden jobs (unless the user asked to see them), then sort.
+  const hiddenInView = visibleJobs.filter(j => hidden.has(j.job_id)).length;
+  const unhiddenJobs = showHidden ? visibleJobs : visibleJobs.filter(j => !hidden.has(j.job_id));
+  // Lists are at most a few pages long, so sorting per render is cheap and
+  // avoids a memo whose inputs are rebuilt every render anyway.
+  const scoreOf = (j) => (pickedRole && j._relevance != null) ? j._relevance : matchScore(j, resumeKeywords.current);
+  const displayJobs = sortJobs(unhiddenJobs, sortMode, scoreOf);
+  const insights = viewMode === "all" ? salaryInsights(displayJobs) : null;
+
   // NEW badge: use posted_at < 24h (the actual job posting age, not when we fetched it).
   // Returns false when the source did not expose a posted timestamp.
   const isFresh = (job) => isJobNew(job);
+
+  // ── hide / track / apply helpers ──────────────────────────────────────────
+  const hideOne = (job) => {
+    setHidden(h => hideJob(h, job.job_id));
+    if (selectedJob?.job_id === job.job_id) setSelectedJob(null);
+  };
+  const trackOne = (job) => setTrackerList(addJobToTracker(job, trackerList));
+  const onApplied = (job) => {
+    // Nudge to track after the apply tab opens; dismissed automatically.
+    if (isJobTracked(job, trackerList)) return;
+    clearTimeout(nudgeTimer.current);
+    setApplyNudge(job);
+    nudgeTimer.current = setTimeout(() => setApplyNudge(null), 12000);
+  };
+  useEffect(() => () => clearTimeout(nudgeTimer.current), []);
+
+  // ── saved searches ────────────────────────────────────────────────────────
+  const currentSnapshot = () => ({
+    query, location: locationQuery, majorId: activeMajor, roleId: activeRole, sectorId: activeSector,
+    filters: { jobType: filters.jobType, expLevel: filters.expLevel, dateRange: filters.dateRange, remote: filters.remote, internship: filters.internship, newGrad: filters.newGrad },
+  });
+  const currentKey = searchKey(currentSnapshot());
+  const currentIsSaved = savedSearches.some(s => s.key === currentKey);
+  const saveCurrentSearch = () => {
+    if (currentIsSaved) { setSavedSearches(list => removeSearch(list, list.find(s => s.key === currentKey).id)); return; }
+    setSavedSearches(list => saveSearch(list, currentSnapshot(), { resultCount: displayJobs.length }));
+  };
+  const runSavedSearch = async (s) => {
+    const f = { ...DEFAULT_FILTERS, ...(s.filters || {}), stateFilter: s.location || "" };
+    setQuery(s.query || "");
+    setLocationQuery(s.location || "");
+    setFilters(f);
+    setActiveSector(s.sectorId || null);
+    setActiveMajor(s.majorId || null);
+    setActiveRole(s.roleId || null);
+    setViewMode("all");
+    setNewSince(null);
+    await fetchJobs(country, s.query || "", 1, f, s.sectorId || null, s.majorId || null, s.roleId || null);
+    // fetchJobs stored page-1 results in sessionStorage; count what's newer than the last visit.
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || "null");
+      const fresh = countNewSince(cached?.jobs || [], s.lastSeenAt);
+      setNewSince({ count: fresh, since: s.lastSeenAt, label: describeSearch(s, searchLabels(s)) });
+      setSavedSearches(list => touchSearch(list, s.id, { resultCount: cached?.jobs?.length ?? s.lastCount }));
+    } catch { /* ignore */ }
+  };
+  const searchLabels = (s) => {
+    const major = s.majorId ? MAJOR_BY_ID[s.majorId] : null;
+    const role = major && s.roleId ? major.roles.find(r => r.id === s.roleId) : null;
+    return { majorLabel: major?.label, roleLabel: role?.label };
+  };
+
+  // ── keyboard navigation: j/k move, Enter/o open, s save, h hide, Esc close, ? help ──
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(document.activeElement)) return;
+      const n = displayJobs.length;
+      if (!n) return;
+      const key = e.key;
+      if (key === "j" || key === "ArrowDown" && !selectedJob) {
+        e.preventDefault();
+        setCursor(c => {
+          const next = Math.min(n - 1, c + 1);
+          if (selectedJob) setSelectedJob(displayJobs[next]);
+          return next;
+        });
+      } else if (key === "k" || key === "ArrowUp" && !selectedJob) {
+        e.preventDefault();
+        setCursor(c => {
+          const next = Math.max(0, c - 1);
+          if (selectedJob) setSelectedJob(displayJobs[next]);
+          return next;
+        });
+      } else if ((key === "Enter" || key === "o") && cursor >= 0 && !selectedJob) {
+        e.preventDefault(); setSelectedJob(displayJobs[cursor]);
+      } else if (key === "s" && cursor >= 0) {
+        e.preventDefault(); toggleSave(displayJobs[cursor]);
+      } else if (key === "h" && cursor >= 0) {
+        e.preventDefault(); hideOne(displayJobs[cursor]);
+      } else if (key === "Escape") {
+        setSelectedJob(null); setApplyNudge(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayJobs, cursor, selectedJob, toggleSave]);
+
+  // Keep the highlighted card in view as the cursor moves.
+  useEffect(() => {
+    if (cursor < 0 || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${cursor}"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [cursor]);
+  useEffect(() => { setCursor(-1); }, [displayJobs.length, sortMode, viewMode]);
 
   return (
     <div className="jobs-page">
@@ -322,6 +470,23 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
               <span>♥</span> Saved <span className="jobs-view-count">{saved.length}</span>
             </button>
           </div>
+
+          {/* Saved searches */}
+          {savedSearches.length > 0 && (
+            <div className="jobs-filter-section">
+              <span className="jobs-filter-label">🔔 Saved searches</span>
+              <div className="saved-search-list">
+                {savedSearches.map(s => (
+                  <div key={s.id} className={`saved-search ${s.key === currentKey ? "active" : ""}`}>
+                    <button className="saved-search-main" onClick={() => runSavedSearch(s)} title="Run this search and see what's new">
+                      {describeSearch(s, searchLabels(s))}
+                    </button>
+                    <button className="saved-search-x" onClick={() => setSavedSearches(list => removeSearch(list, s.id))} aria-label="Remove saved search">×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Popular USA locations */}
           <PopularLocations activeValue={locationQuery} onPick={pickLocation} />
@@ -461,17 +626,32 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                 <p style={{ fontSize: "15px", marginBottom: "6px" }}>No saved jobs yet</p>
                 <p style={{ opacity: 0.5 }}>Tap the heart on any job to save it for later.</p>
               </div>
-            ) : visibleJobs.length === 0 && !loading ? (
-              <div className="jobs-empty">No jobs match your filters. Try widening your search.</div>
+            ) : displayJobs.length === 0 && !loading ? (
+              <div className="jobs-empty">
+                {hiddenInView > 0 && !showHidden
+                  ? <>All {hiddenInView} matching job{hiddenInView !== 1 ? "s are" : " is"} hidden. <button className="jobs-link-btn" onClick={() => setShowHidden(true)}>Show hidden</button></>
+                  : "No jobs match your filters. Try widening your search."}
+              </div>
             ) : (
               <>
-                {visibleJobs.length > 0 && (
+                {newSince && (
+                  <div className={`jobs-new-since ${newSince.count > 0 ? "has-new" : ""}`}>
+                    {newSince.count > 0
+                      ? <><strong>{newSince.count} new</strong> job{newSince.count !== 1 ? "s" : ""} for “{newSince.label}” since your last visit</>
+                      : <>Nothing new for “{newSince.label}” since your last visit</>}
+                    <button className="jobs-link-btn" onClick={() => setNewSince(null)}>dismiss</button>
+                  </div>
+                )}
+                {displayJobs.length > 0 && (
                   <div className="jobs-result-bar">
                     <span className="jobs-result-count">
-                      <strong>{visibleJobs.length}</strong> {viewMode === "saved" ? "saved" : "matching"} job{visibleJobs.length !== 1 ? "s" : ""}
+                      <strong>{displayJobs.length}</strong> {viewMode === "saved" ? "saved" : "matching"} job{displayJobs.length !== 1 ? "s" : ""}
                       {hasActiveFilters && viewMode === "all" ? " · filtered" : ""}
                       {pickedRole && filteredOutCount > 0 && (
                         <span className="jobs-result-filtered-out"> · {filteredOutCount} hidden as off-target</span>
+                      )}
+                      {hiddenInView > 0 && (
+                        <span className="jobs-result-filtered-out"> · <button className="jobs-link-btn" onClick={() => setShowHidden(v => !v)}>{showHidden ? "hide" : "show"} {hiddenInView} not-interested</button></span>
                       )}
                     </span>
                     {backupMode && (
@@ -490,16 +670,59 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                         <span className="jobs-result-pill-dot" /> AI matching active
                       </span>
                     )}
+                    <span className="jobs-result-tools">
+                      <label className="jobs-sort">
+                        <span>Sort</span>
+                        <select value={sortMode} onChange={e => setSortMode(e.target.value)} aria-label="Sort jobs">
+                          {SORT_MODES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        </select>
+                      </label>
+                      {viewMode === "all" && (
+                        <button className={`jobs-save-search ${currentIsSaved ? "on" : ""}`} onClick={saveCurrentSearch} title={currentIsSaved ? "Remove this saved search" : "Save this search and get a 'new since last visit' count"}>
+                          {currentIsSaved ? "🔔 Saved" : "🔔 Save search"}
+                        </button>
+                      )}
+                    </span>
                   </div>
                 )}
-                {visibleJobs.map(job => {
+                {insights && displayJobs.length >= 3 && (
+                  <div className="jobs-insights" aria-label="Market snapshot for these results">
+                    <div className="jobs-insight">
+                      <span className="jobs-insight-val">{insights.medianSalary ? formatK(insights.medianSalary) : "—"}</span>
+                      <span className="jobs-insight-lbl">median pay{insights.pctWithSalary ? ` · ${insights.pctWithSalary}% list it` : ""}</span>
+                    </div>
+                    <div className="jobs-insight">
+                      <span className="jobs-insight-val">{insights.remotePct}%</span>
+                      <span className="jobs-insight-lbl">remote</span>
+                    </div>
+                    <div className="jobs-insight">
+                      <span className="jobs-insight-val">{insights.companies}</span>
+                      <span className="jobs-insight-lbl">compan{insights.companies === 1 ? "y" : "ies"}</span>
+                    </div>
+                    {insights.topSkills.length > 0 && (
+                      <div className="jobs-insight jobs-insight-skills">
+                        <span className="jobs-insight-lbl">in demand</span>
+                        <span className="jobs-insight-chips">
+                          {insights.topSkills.slice(0, 5).map(s => (
+                            <span key={s.name} className={`skill-chip ${resumeKeywords.current?.has(s.name.toLowerCase()) ? "hit" : ""}`} title={`${s.count} posting${s.count !== 1 ? "s" : ""}`}>{s.name}</span>
+                          ))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div ref={listRef}>
+                {displayJobs.map((job, idx) => {
                   const indColor = INDUSTRY_COLORS[job.industry] || "#94a3b8";
                   const expColor = EXP_COLORS[job.experience_level] || "#94a3b8";
                   const empType = formatEmploymentType(job.employment_type || job.job_type);
                   const timeAgo = job.posted_at ? formatDate(job.posted_at) : null;
-                  const isExpanded = expanded === job.job_id;
+                  const isExpanded = selectedJob?.job_id === job.job_id;
                   const score = matchScore(job, resumeKeywords.current);
                   const savedNow = isSaved(job.job_id);
+                  const isHiddenJob = hidden.has(job.job_id);
+                  const { chips, extra } = skillChips(job, resumeKeywords.current, 5);
+                  const sponsor = sponsorshipSignal(job);
                   const salaryText =
                     job.salary_min && job.salary_max
                       ? `$${Math.round(job.salary_min/1000)}k–$${Math.round(job.salary_max/1000)}k`
@@ -512,17 +735,28 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                   return (
                     <div
                       key={job.job_id}
-                      className={`li-job-card ${isExpanded ? "active" : ""}`}
-                      onClick={() => setExpanded(isExpanded ? null : job.job_id)}
+                      data-idx={idx}
+                      className={`li-job-card ${isExpanded ? "active" : ""} ${cursor === idx ? "kb-active" : ""} ${isHiddenJob ? "is-hidden" : ""}`}
+                      onClick={() => { setCursor(idx); setSelectedJob(job); }}
                     >
-                      <button
-                        className={`save-job-btn ${savedNow ? "saved" : ""}`}
-                        onClick={(e) => { e.stopPropagation(); toggleSave(job); }}
-                        title={savedNow ? "Unsave" : "Save"}
-                        aria-label={savedNow ? "Unsave job" : "Save job"}
-                      >
-                        {savedNow ? "♥" : "♡"}
-                      </button>
+                      <div className="li-card-corner" onClick={e => e.stopPropagation()}>
+                        <button
+                          className="hide-job-btn"
+                          onClick={() => isHiddenJob ? setHidden(h => unhideJob(h, job.job_id)) : hideOne(job)}
+                          title={isHiddenJob ? "Show this job again" : "Not interested — hide this job"}
+                          aria-label={isHiddenJob ? "Unhide job" : "Hide job"}
+                        >
+                          {isHiddenJob ? "↺" : "✕"}
+                        </button>
+                        <button
+                          className={`save-job-btn ${savedNow ? "saved" : ""}`}
+                          onClick={() => toggleSave(job)}
+                          title={savedNow ? "Unsave" : "Save"}
+                          aria-label={savedNow ? "Unsave job" : "Save job"}
+                        >
+                          {savedNow ? "♥" : "♡"}
+                        </button>
+                      </div>
 
                       <div className="li-card-top">
                         <CompanyAvatar name={job.company} size={48} />
@@ -575,11 +809,25 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                         {salaryText && (
                           <span className="li-badge li-badge-salary">{salaryText}</span>
                         )}
+                        {sponsor === "mentions" && (
+                          <span className="li-badge jd-sponsor ok" title="Mentions visa sponsorship or work authorization — read the wording">🛂 Sponsorship</span>
+                        )}
+                        {sponsor === "no" && (
+                          <span className="li-badge jd-sponsor no" title="Says it won't sponsor or requires existing work authorization">🛂 No sponsorship</span>
+                        )}
                       </div>
+                      {chips.length > 0 && (
+                        <div className="li-card-skills">
+                          {chips.map(c => (
+                            <span key={c.name} className={`skill-chip ${c.matched ? "hit" : ""}`} title={c.matched ? "On your resume" : undefined}>{c.matched ? "✓ " : ""}{c.name}</span>
+                          ))}
+                          {extra > 0 && <span className="skill-chip more">+{extra}</span>}
+                        </div>
+                      )}
 
                       <div className="li-card-actions" onClick={e => e.stopPropagation()}>
                         {(job.url || job.job_url) ? (
-                          <a className="li-apply-btn" href={job.url || job.job_url} target="_blank" rel="noopener noreferrer">Apply Now</a>
+                          <a className="li-apply-btn" href={job.url || job.job_url} target="_blank" rel="noopener noreferrer" onClick={() => onApplied(job)}>Apply Now</a>
                         ) : (
                           <span className="li-apply-btn apply-na">No Link</span>
                         )}
@@ -592,7 +840,7 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                             <button
                               className={`li-track-btn ${tracked ? "tracked" : ""}`}
                               disabled={tracked}
-                              onClick={() => setTrackerList(addJobToTracker(job, trackerList))}
+                              onClick={() => trackOne(job)}
                               title={tracked ? "Already in your Application Tracker" : "Add to Application Tracker"}
                             >
                               {tracked ? "✓ Tracked" : "＋ Track"}
@@ -613,14 +861,10 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
                         )}
                       </div>
 
-                      {isExpanded && (
-                        <div className="li-description" onClick={e => e.stopPropagation()}>
-                          {job.description || "No description available."}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
+                </div>
                 {viewMode === "all" && hasMore && (
                   <div style={{ textAlign: "center", marginTop: "28px" }}>
                     <button className="load-more-btn" onClick={e => { e.stopPropagation(); fetchJobs(country, query, page + 1); }} disabled={loading}>
@@ -633,6 +877,34 @@ export default function JobsTab({ onPrepInterview, onCoverLetter }) {
           )}
         </main>
       </div>
+
+      {selectedJob && (
+        <JobDetailDrawer
+          job={selectedJob}
+          pool={viewMode === "saved" ? saved : jobs}
+          onClose={() => setSelectedJob(null)}
+          onSelect={(j) => { setSelectedJob(j); const i = displayJobs.findIndex(x => x.job_id === j.job_id); if (i >= 0) setCursor(i); }}
+          saved={isSaved(selectedJob.job_id)}
+          onToggleSave={toggleSave}
+          tracked={isJobTracked(selectedJob, trackerList)}
+          onTrack={trackOne}
+          onHide={hideOne}
+          onPrepInterview={onPrepInterview}
+          onCoverLetter={onCoverLetter}
+          onDecodeJD={onDecodeJD}
+          onApplied={onApplied}
+          resumeKeywords={resumeKeywords.current}
+          matchScore={matchScore(selectedJob, resumeKeywords.current)}
+        />
+      )}
+
+      {applyNudge && (
+        <div className="apply-nudge" role="status">
+          <span>Applied to <strong>{applyNudge.company || applyNudge.title}</strong>?</span>
+          <button className="apply-nudge-btn" onClick={() => { trackOne(applyNudge); setApplyNudge(null); }}>＋ Track it</button>
+          <button className="apply-nudge-x" onClick={() => setApplyNudge(null)} aria-label="Dismiss">✕</button>
+        </div>
+      )}
     </div>
   );
 }

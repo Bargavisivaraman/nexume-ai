@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import JobsTab from './JobsTab'
@@ -31,22 +31,28 @@ describe('JobsTab card actions', () => {
     const user = userEvent.setup()
     render(<JobsTab onPrepInterview={onPrepInterview} onCoverLetter={onCoverLetter} />)
 
+    // Clicking a card opens the detail drawer with the full description
     await user.click(await screen.findByText('Backend Engineer'))
-    expect(screen.getByText(/Design and run the API platform/)).toBeInTheDocument()
+    const drawer = await screen.findByRole('dialog')
+    expect(within(drawer).getByText(/Design and run the API platform/)).toBeInTheDocument()
 
-    await user.click(screen.getByText('Prep Interview'))
+    await user.click(within(drawer).getByText(/Prep interview/))
     expect(onPrepInterview).toHaveBeenCalledWith('Backend Engineer', 'Acme Inc')
 
-    await user.click(screen.getByText(/Cover letter/))
+    await user.click(within(drawer).getByText(/Cover letter/))
     expect(onCoverLetter).toHaveBeenCalledWith(expect.objectContaining({ job_id: 'j1' }))
+
+    // Esc closes it
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('tracks a job into the application tracker and disables the button', async () => {
     const user = userEvent.setup()
     render(<JobsTab />)
 
-    await user.click(await screen.findByText('Backend Engineer'))
-    await user.click(screen.getByText('＋ Track'))
+    await screen.findByText('Backend Engineer')
+    await user.click(screen.getByText('＋ Track'))   // card-level button, no drawer open
 
     const tracked = JSON.parse(localStorage.getItem('ltr_tracker'))
     expect(tracked.some((t) => t.title === 'Backend Engineer')).toBe(true)

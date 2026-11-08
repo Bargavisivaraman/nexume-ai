@@ -118,8 +118,8 @@ const SIGNAL_TONE = {
 
 // ── 1. JD Decoder ────────────────────────────────────────────────────────────
 
-export function JDDecoderTool() {
-  const [jd, setJd] = useState("");
+export function JDDecoderTool({ prefill }) {
+  const [jd, setJd] = useState(() => prefill?.jd || "");   // seeded by the Jobs tab hand-off
   const [resume, setResume] = useStickyResume();
   const tool = useTool("/decode-jd/");
   const [copied, copy] = useCopy();

@@ -1014,8 +1014,10 @@ const TOOL_GROUPS = [
   ]},
 ];
 
-function ToolsPage() {
-  const [activeTool, setActiveTool] = useState("jd");
+// Remounted (via key) on every hand-off from the Jobs tab, so `prefill`
+// only needs to seed initial state.
+function ToolsPage({ prefill }) {
+  const [activeTool, setActiveTool] = useState(prefill?.tool || "jd");
 
   return (
     <div className="tools-page">
@@ -1049,7 +1051,7 @@ function ToolsPage() {
           {activeTool === "salary"    && <SalaryTool />}
           {["jd", "star", "pitch", "offer", "reply"].includes(activeTool) && (
             <Suspense fallback={<TabLoading />}>
-              {activeTool === "jd"    && <JDDecoderTool />}
+              {activeTool === "jd"    && <JDDecoderTool prefill={prefill?.tool === "jd" ? prefill : null} />}
               {activeTool === "star"  && <StarStoryTool />}
               {activeTool === "pitch" && <PitchTool />}
               {activeTool === "offer" && <NegotiatorTool />}
@@ -1338,12 +1340,15 @@ function SalaryTool() {
 const TAB_ORDER = ["resume","cover","jobs","interview","tracker","tools"];
 
 function App() {
-  const [tab, setTab]               = useState("resume");
+  // A shared job link (/?job=<id>) should land straight on the Jobs tab.
+  const initialTab = new URLSearchParams(window.location.search).has("job") ? "jobs" : "resume";
+  const [tab, setTab]               = useState(initialTab);
   const [transDir, setTransDir]     = useState("forward");
-  const tabRef                      = useRef("resume");
+  const tabRef                      = useRef(initialTab);
   const [interviewTitle, setInterviewTitle]   = useState(null);
   const [interviewCompany, setInterviewCompany] = useState(null);
   const [coverPrefill, setCoverPrefill]       = useState(null);
+  const [toolsPrefill, setToolsPrefill]       = useState(null);   // { tool, jd }
   const [theme, setThemeState]      = useState(() => localStorage.getItem("ltr_theme") || "dark");
   const [backendWaking, setBackendWaking] = useState(false);
 
@@ -1416,6 +1421,19 @@ function App() {
     switchTab("cover");
   };
 
+  // "🧩 Decode JD" in the job drawer → AI Tools tab with the JD Decoder prefilled
+  const handleDecodeJD = (job) => {
+    const jdText = [
+      job?.title && `Role: ${job.title}`,
+      job?.company && `Company: ${job.company}`,
+      job?.location && `Location: ${job.location}`,
+      "",
+      job?.description || "",
+    ].filter(x => x !== undefined && x !== null).join("\n");
+    setToolsPrefill({ tool: "jd", jd: jdText.trim(), nonce: Date.now() });
+    switchTab("tools");
+  };
+
   const resetApp = () => {
     setInterviewTitle(null);
     setInterviewCompany(null);
@@ -1437,10 +1455,10 @@ function App() {
             <Suspense fallback={<TabLoading />}>
               {tab === "resume"    && <ResumePage />}
               {tab === "cover"     && <CoverLetterPage prefill={coverPrefill} />}
-              {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} onCoverLetter={handleCoverLetter} />}
+              {tab === "jobs"      && <JobsTab onPrepInterview={handlePrepInterview} onCoverLetter={handleCoverLetter} onDecodeJD={handleDecodeJD} />}
               {tab === "interview" && <InterviewPage prefillTitle={interviewTitle} prefillCompany={interviewCompany} />}
               {tab === "tracker"   && <TrackerPage />}
-              {tab === "tools"     && <ToolsPage />}
+              {tab === "tools"     && <ToolsPage key={toolsPrefill?.nonce || "tools"} prefill={toolsPrefill} />}
             </Suspense>
           </TabErrorBoundary>
         </div>
