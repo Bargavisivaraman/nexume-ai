@@ -68,11 +68,17 @@ async def _fetch_one(http: httpx.AsyncClient, company: dict) -> list[dict]:
     if not fetcher:
         return []
     rows = await fetcher(http, company["slug"], company["name"])
-    # Industry tagging happens here (the adapter left it null)
-    # We use the company's industry hint as a default; refine per-title later
+    # Industry tagging happens here (the adapter left it null).
+    # classify_industry always returns a string ("Other" when unsure), so the
+    # company's industry hint must step in exactly when the title classifier
+    # punted — not never.
     from jobs import classify_industry
     for r in rows:
-        r["industry"] = r.get("industry") or classify_industry(r["title"]) or company.get("industry", "Other")
+        if not r.get("industry"):
+            ind = classify_industry(r["title"])
+            if ind == "Other":
+                ind = company.get("industry") or "Other"
+            r["industry"] = ind
     return rows
 
 
@@ -115,12 +121,39 @@ async def run_ats_ingestion(
     stats["companies_run"] = len(results)
     all_rows, stats["fetched"] = dedupe_rows_by_job_id(results)
 
+    # Preserve fetched_at on rows the DB already holds. Every tier1 run
+    # re-upserts the whole corpus; letting each upsert stamp a fresh
+    # fetched_at made "new_in_last_hour" count ~everything and reshuffled the
+    # /jobs/ sort order (fetched_at desc) between page requests. Only rows
+    # that are actually new keep their just-generated timestamp; every other
+    # column still gets replaced by the upsert.
+    CHUNK = 200
+    existing_fetched_at: dict[str, str] = {}
+    all_ids = [r["job_id"] for r in all_rows]
+    for i in range(0, len(all_ids), CHUNK):
+        id_chunk = all_ids[i : i + CHUNK]
+        try:
+            res = await asyncio.to_thread(
+                lambda ids=id_chunk: supabase.table("jobs")
+                .select("job_id,fetched_at").in_("job_id", ids).execute()
+            )
+            for row in (res.data or []):
+                if row.get("job_id") and row.get("fetched_at"):
+                    existing_fetched_at[row["job_id"]] = row["fetched_at"]
+        except Exception as e:
+            # Lookup failure is non-fatal — worst case those rows get a fresh
+            # fetched_at, which is the old (pre-fix) behaviour.
+            print(f"[ATS Ingest] fetched_at lookup failed on chunk {i}: {e}")
+    for r in all_rows:
+        prior = existing_fetched_at.get(r["job_id"])
+        if prior:
+            r["fetched_at"] = prior
+
     # Upsert in chunks (Supabase has request-size limits).
     # The supabase client is synchronous — run each upsert in a thread so it
     # never blocks the event loop. Before this, a boot-time ingestion froze
     # every in-flight user request (/jobs/, /jobs/stats hung for the whole
     # upsert phase) because the loop couldn't schedule anything else.
-    CHUNK = 200
     for i in range(0, len(all_rows), CHUNK):
         chunk = all_rows[i : i + CHUNK]
         try:

@@ -1059,7 +1059,10 @@ async def jobs_stats():
     if cached is not None and (time.monotonic() - _STATS_CACHE["ts"]) < _STATS_TTL_SECONDS:
         return cached
 
-    try:
+    # The supabase client is synchronous — run the whole multi-query
+    # computation in one worker thread so a cache miss never stalls the
+    # event loop (this endpoint is polled by every open tab).
+    def _compute() -> dict:
         now = datetime.now(timezone.utc)
         one_hour_ago = (now - timedelta(hours=1)).isoformat()
 
@@ -1076,9 +1079,13 @@ async def jobs_stats():
         )
         last_updated = latest[0]["fetched_at"] if latest else None
 
+        # Same is_active/country filters as total_jobs — otherwise the stat
+        # counts foreign and deactivated rows the UI never shows.
         new_count = (
             supabase.table("jobs").select("job_id", count="exact")
-            .gte("fetched_at", one_hour_ago).limit(1).execute().count
+            .gte("fetched_at", one_hour_ago)
+            .eq("is_active", True).eq("country", "US")
+            .limit(1).execute().count
         ) or 0
 
         # Jobs whose ORIGINAL posting timestamp is within the last 24h.
@@ -1125,7 +1132,7 @@ async def jobs_stats():
         except Exception:
             pass
 
-        payload = {
+        return {
             "total_jobs":           total,
             "last_updated":         last_updated,
             "new_in_last_hour":     new_count,
@@ -1136,6 +1143,9 @@ async def jobs_stats():
             "server_time":          now.isoformat(),
             "supabase_offline":     False,
         }
+
+    try:
+        payload = await asyncio.to_thread(_compute)
         _STATS_CACHE["data"] = payload
         _STATS_CACHE["ts"] = time.monotonic()
         return payload

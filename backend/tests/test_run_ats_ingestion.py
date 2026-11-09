@@ -64,6 +64,47 @@ def test_db_failure_counts_chunk_as_errors(monkeypatch):
     assert stats["errors"] == 1
 
 
+def test_preserves_fetched_at_for_rows_already_in_the_db(monkeypatch):
+    """A 5-min tier1 re-upsert must not bump fetched_at across the whole
+    corpus — only genuinely new rows keep their fresh timestamp."""
+    OLD = "2026-01-01T00:00:00+00:00"
+    FRESH = "2026-11-08T12:00:00+00:00"
+    _patch(monkeypatch, {
+        "acme": [
+            {"job_id": "a1", "title": "Software Engineer", "industry": None, "fetched_at": FRESH},
+            {"job_id": "b1", "title": "Software Engineer", "industry": None, "fetched_at": FRESH},
+        ],
+        "beta": [],
+    })
+    # The DB already holds a1 — the lookup returns its original fetched_at
+    fake_db = FakeSupabase(tables={"jobs": [{"job_id": "a1", "fetched_at": OLD}]})
+
+    asyncio.run(pipeline.run_ats_ingestion(fake_db, tier="tier1"))
+
+    upserted = {r["job_id"]: r for r in fake_db.payloads("jobs", "upsert")[0]}
+    assert upserted["a1"]["fetched_at"] == OLD     # existing row keeps its timestamp
+    assert upserted["b1"]["fetched_at"] == FRESH   # new row is stamped now
+
+
+def test_company_industry_fills_in_when_title_is_unclassifiable(monkeypatch):
+    _patch(monkeypatch, {
+        "acme": [
+            {"job_id": "a1", "title": "Pastry Chef", "industry": None},
+            {"job_id": "a2", "title": "Registered Nurse", "industry": None},
+        ],
+        "beta": [],
+    })
+    fake_db = FakeSupabase()
+
+    asyncio.run(pipeline.run_ats_ingestion(fake_db, tier="tier1"))
+
+    upserted = {r["job_id"]: r for r in fake_db.payloads("jobs", "upsert")[0]}
+    # Title classifier punts ("Other") → the company's registry industry wins
+    assert upserted["a1"]["industry"] == "Technology"
+    # A classifiable title still beats the company hint
+    assert upserted["a2"]["industry"] == "Healthcare"
+
+
 def test_no_companies_short_circuits(monkeypatch):
     monkeypatch.setattr(pipeline, "list_companies_by_tier", lambda tier: [])
     fake_db = FakeSupabase()

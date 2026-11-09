@@ -326,10 +326,13 @@ async def run_ingestion(
                     print(f"[Transform] Error: {e}")
                     stats["errors"] += 1
 
-            # Upsert to Supabase
+            # Upsert to Supabase — the client is synchronous, so run it in a
+            # thread (like pipeline.py) to keep the event loop responsive.
             if rows:
                 try:
-                    supabase.table("jobs").upsert(rows, on_conflict="job_id").execute()
+                    await asyncio.to_thread(
+                        lambda r=rows: supabase.table("jobs").upsert(r, on_conflict="job_id").execute()
+                    )
                     stats["inserted"] += len(rows)
                     print(f"[DB] Upserted {len(rows)} jobs for '{query}'")
                 except Exception as e:
@@ -339,10 +342,10 @@ async def run_ingestion(
 
             await asyncio.sleep(0.8)  # respect JSearch rate limit
 
-    # Log ingestion run
+    # Log ingestion run (threaded for the same reason as the upserts)
     elapsed = (datetime.now(timezone.utc) - start).seconds
     try:
-        supabase.table("ingestion_runs").insert({
+        run_row = {
             "run_id":       run_id,
             "country":      country,
             "queries_run":  len(queries),
@@ -351,7 +354,10 @@ async def run_ingestion(
             "skipped":      stats["skipped"],
             "errors":       stats["errors"],
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("ingestion_runs").insert(run_row).execute()
+        )
         print(f"[Ingestion] Run {run_id} done in {elapsed}s — {stats}")
     except Exception as e:
         print(f"[Ingestion] Failed to log run: {e}")

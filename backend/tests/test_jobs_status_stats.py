@@ -35,6 +35,21 @@ def test_stats_reports_counts_and_sources(api_client, fake_supabase):
     assert body["supabase_offline"] is False
 
 
+def test_new_in_last_hour_counts_only_active_us_rows(api_client, fake_supabase):
+    """The hourly stat must carry the same is_active/country filters as
+    total_jobs — otherwise it counts foreign and deactivated rows."""
+    fake = fake_supabase(tables={"jobs": [{"fetched_at": "x"}], "ingestion_runs": []})
+
+    api_client.get("/jobs/stats")
+
+    idx = next(
+        i for i, (t, m, args, _k) in enumerate(fake.calls)
+        if t == "jobs" and m == "gte" and args and args[0] == "fetched_at"
+    )
+    following = [(m, args) for (_t, m, args, _k) in fake.calls[idx + 1 : idx + 3]]
+    assert following == [("eq", ("is_active", True)), ("eq", ("country", "US"))]
+
+
 def test_stats_degrades_when_db_is_offline(api_client, fake_supabase):
     fake_supabase(fail=True)
 
