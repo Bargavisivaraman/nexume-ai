@@ -10,6 +10,20 @@ import os
 import httpx
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
+
+
+# Provider failures must not leak billing/key details to visitors. Quota and
+# auth problems are the operator's to fix, so visitors get a clean 503 and
+# the real error goes to the server log.
+_PROVIDER_OUTAGE_MARKERS = ("insufficient_quota", "credit_balance_exhausted", "invalid_api_key",
+                            "incorrect api key", "rate_limit_exceeded", "error code: 429", "error code: 401")
+
+def llm_http_error(prefix: str, e: Exception) -> HTTPException:
+    print(f"[LLM] {prefix} failed: {e}")
+    text = str(e).lower()
+    if any(m in text for m in _PROVIDER_OUTAGE_MARKERS):
+        return HTTPException(status_code=503, detail="AI features are temporarily unavailable. Please try again soon.")
+    return HTTPException(status_code=500, detail=f"{prefix} failed. Please try again.")
 from supabase import create_client, Client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timezone, timedelta
@@ -1320,7 +1334,7 @@ Return this exact JSON:
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Model returned invalid JSON")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Interview generation failed: {str(e)}")
+        raise llm_http_error("Interview generation", e)
 
 
 @app.post("/evaluate-answer/", response_model=EvaluateResponse, dependencies=[Depends(rate_limit_expensive)])
@@ -1380,7 +1394,7 @@ Return this exact JSON:
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Model returned invalid JSON")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
+        raise llm_http_error("Evaluation", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1490,7 +1504,7 @@ async def interview_turn(req: InterviewTurnRequest):
         )
         return {"message": text, "should_end": should_end, "turn_count": turn_count}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Interview turn failed: {str(e)}")
+        raise llm_http_error("Interview turn", e)
 
 
 class TTSRequest(BaseModel):
@@ -1529,7 +1543,7 @@ async def interview_tts(req: TTSRequest):
             headers={"Cache-Control": "no-store"},
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
+        raise llm_http_error("Speech synthesis", e)
 
 
 @app.post("/transcribe/", dependencies=[Depends(rate_limit_tts)])
@@ -1574,7 +1588,7 @@ async def transcribe(audio: UploadFile = File(...)):
             text = await asyncio.to_thread(_transcribe, "whisper-1")
         return {"text": text}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        raise llm_http_error("Transcription", e)
 
 
 class InterviewSummaryRequest(BaseModel):
@@ -1630,7 +1644,7 @@ async def interview_summary(req: InterviewSummaryRequest):
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Summary model returned invalid JSON")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Summary failed: {str(e)}")
+        raise llm_http_error("Summary", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1786,7 +1800,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Rewrite failed: {str(e)}")
+        raise llm_http_error("Rewrite", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1842,7 +1856,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {str(e)}")
+        raise llm_http_error("Cover letter generation", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1885,7 +1899,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"LinkedIn optimization failed: {str(e)}")
+        raise llm_http_error("LinkedIn optimization", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1934,7 +1948,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cold email generation failed: {str(e)}")
+        raise llm_http_error("Cold email generation", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1984,7 +1998,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Skill gap analysis failed: {str(e)}")
+        raise llm_http_error("Skill gap analysis", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2035,7 +2049,7 @@ Return JSON:
         ))
         return json.loads(response.choices[0].message.content.strip())
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Salary estimation failed: {str(e)}")
+        raise llm_http_error("Salary estimation", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2059,7 +2073,7 @@ async def _llm_json(system: str, user: str, *, max_tokens: int = 900, temperatur
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{label} failed: {str(e)}")
+        raise llm_http_error(label, e)
 
 
 class JDDecodeRequest(BaseModel):
@@ -2447,7 +2461,7 @@ async def chat(req: ChatRequest):
             "jobs":  jobs_data,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+        raise llm_http_error("Chat", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
