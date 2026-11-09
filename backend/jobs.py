@@ -11,15 +11,19 @@ Rules enforced here:
   - Deduplicate by external job_id; secondary dedupe by title+company+location hash
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
-from supabase import Client
+
+if TYPE_CHECKING:
+    from supabase import Client
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTS
@@ -322,10 +326,13 @@ async def run_ingestion(
                     print(f"[Transform] Error: {e}")
                     stats["errors"] += 1
 
-            # Upsert to Supabase
+            # Upsert to Supabase — the client is synchronous, so run it in a
+            # thread (like pipeline.py) to keep the event loop responsive.
             if rows:
                 try:
-                    supabase.table("jobs").upsert(rows, on_conflict="job_id").execute()
+                    await asyncio.to_thread(
+                        lambda r=rows: supabase.table("jobs").upsert(r, on_conflict="job_id").execute()
+                    )
                     stats["inserted"] += len(rows)
                     print(f"[DB] Upserted {len(rows)} jobs for '{query}'")
                 except Exception as e:
@@ -335,10 +342,10 @@ async def run_ingestion(
 
             await asyncio.sleep(0.8)  # respect JSearch rate limit
 
-    # Log ingestion run
+    # Log ingestion run (threaded for the same reason as the upserts)
     elapsed = (datetime.now(timezone.utc) - start).seconds
     try:
-        supabase.table("ingestion_runs").insert({
+        run_row = {
             "run_id":       run_id,
             "country":      country,
             "queries_run":  len(queries),
@@ -347,7 +354,10 @@ async def run_ingestion(
             "skipped":      stats["skipped"],
             "errors":       stats["errors"],
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("ingestion_runs").insert(run_row).execute()
+        )
         print(f"[Ingestion] Run {run_id} done in {elapsed}s — {stats}")
     except Exception as e:
         print(f"[Ingestion] Failed to log run: {e}")
@@ -358,6 +368,21 @@ async def run_ingestion(
 # ─────────────────────────────────────────────────────────────────────────────
 # QUERY BUILDER  (used by /jobs/ endpoint)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _sanitize_or_term(value: str) -> str:
+    """Make a user string safe inside a PostgREST ``or=`` pattern.
+
+    Commas, parentheses and percent signs are structural in the or= syntax —
+    a keyword like "ux, design" or "Austin (TX)" would otherwise produce a
+    malformed filter (PGRST100), which upstream code mistakes for Supabase
+    being offline. Replace them with spaces and collapse the whitespace so the
+    term still matches sensibly.
+    """
+    cleaned = value
+    for ch in (",", "(", ")", "%"):
+        cleaned = cleaned.replace(ch, " ")
+    return " ".join(cleaned.split())
+
 
 def build_jobs_query(
     supabase: Client,
@@ -379,8 +404,9 @@ def build_jobs_query(
     SELECT = (
         "job_id,title,company,location,city,state,country,"
         "is_remote,work_mode,industry,job_type,experience_level,"
+        "is_internship,is_new_grad,"
         "salary_min,salary_max,salary_currency,salary_period,"
-        "url,source_name,posted_at,fetched_at,"
+        "url,source_name,tech_stack,posted_at,fetched_at,"
         "description"
     )
 
@@ -393,12 +419,13 @@ def build_jobs_query(
 
     # ── Keyword (title + company + description) ───────────────────────────────
     if keyword and keyword.strip():
-        kw = keyword.strip()
-        q  = q.or_(
-            f"title.ilike.%{kw}%,"
-            f"company.ilike.%{kw}%,"
-            f"description.ilike.%{kw}%"
-        )
+        kw = _sanitize_or_term(keyword)
+        if kw:
+            q = q.or_(
+                f"title.ilike.%{kw}%,"
+                f"company.ilike.%{kw}%,"
+                f"description.ilike.%{kw}%"
+            )
 
     # ── Industry (exact match on pre-classified column) ───────────────────────
     if industry and industry.strip():
@@ -423,17 +450,39 @@ def build_jobs_query(
     if work_mode and work_mode.strip():
         q = q.eq("work_mode", work_mode.strip())
 
-    # ── State filter ─────────────────────────────────────────────────────────
+    # ── State / location filter ──────────────────────────────────────────────
+    # The user types something like "Los Angeles, CA" into the location box.
+    # That string could match any of: the `city` column, the `state` column, or
+    # the denormalized `location` column. OR across all three so we don't miss.
     if state_filter and state_filter.strip():
-        q = q.ilike("state", f"%{state_filter.strip()}%")
+        # Sanitized full string ("Los Angeles, CA" → "Los Angeles CA") — the
+        # comma is structural in PostgREST or=, so the pattern swaps it for a
+        # space. That full pattern won't hit the comma-formed `location`
+        # column, so ALSO match the city segment ("Los Angeles") on its own.
+        sf = _sanitize_or_term(state_filter)
+        city_token = _sanitize_or_term(state_filter.split(",")[0])
+        if sf:
+            clauses = [
+                f"city.ilike.%{sf}%",
+                f"state.ilike.%{sf}%",
+                f"location.ilike.%{sf}%",
+            ]
+            if city_token and city_token != sf:
+                clauses.append(f"city.ilike.%{city_token}%")
+                clauses.append(f"location.ilike.%{city_token}%")
+            q = q.or_(",".join(clauses))
 
-    # ── Date range ───────────────────────────────────────────────────────────
+    # ── Date range — filter by the source's posted_at, NOT our fetched_at ────
+    # fetched_at = "we just ingested it"; posted_at = "the company posted it".
+    # Users mean the latter when they pick "Past 24 hours".
+    # Jobs without a posted_at (some sources like Lever omit it) are excluded
+    # from any restrictive date filter — better to under-include than mislead.
     if date_range and date_range != "all":
         hours_map = {"24h": 24, "7d": 168, "30d": 720}
         hours = hours_map.get(date_range)
         if hours:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-            q = q.gte("fetched_at", cutoff)
+            q = q.gte("posted_at", cutoff).not_.is_("posted_at", "null")
 
     return q
 
