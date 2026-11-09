@@ -1008,7 +1008,10 @@ async def get_jobs(
         }
 
 
+# Registered with AND without the trailing slash — the bare /jobs/status
+# otherwise falls through to the /jobs/{job_id} catch-all and 404s.
 @app.get("/jobs/status/", dependencies=[Depends(rate_limit_read)])
+@app.get("/jobs/status", include_in_schema=False, dependencies=[Depends(rate_limit_read)])
 async def ingestion_status():
     """Returns the last 5 ingestion run results for monitoring."""
     try:
@@ -2311,13 +2314,19 @@ JOB_INTENT_WORDS = {
     "opening", "openings", "vacancy", "vacancies", "find", "search", "looking",
     "apply", "applications", "listing", "listings", "career", "careers",
     "work", "opportunity", "opportunities", "internship", "internships",
-    "remote", "full-time", "part-time", "entry level", "senior", "junior",
+    "remote", "senior", "junior",
 }
+# Multi-word / hyphenated signals checked as substrings (they never survive
+# word tokenization intact).
+JOB_INTENT_PHRASES = ("entry level", "full-time", "part-time")
 
 def _detect_job_intent(text: str) -> Optional[str]:
     """Return extracted keyword if message is asking about job listings, else None."""
     lower = text.lower()
-    if not any(w in lower for w in JOB_INTENT_WORDS):
+    # Whole-word match — substring scanning fired on "work" in "framework",
+    # "hire" in "hired a contractor", etc.
+    tokens = set(re.findall(r"[a-z]+", lower))
+    if not (tokens & JOB_INTENT_WORDS) and not any(p in lower for p in JOB_INTENT_PHRASES):
         return None
     # Strip common stop words to get a usable search keyword
     stop = {"find", "me", "some", "any", "a", "an", "the", "for", "in", "at",

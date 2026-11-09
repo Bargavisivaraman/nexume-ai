@@ -10,6 +10,16 @@ def test_status_returns_recent_runs(api_client, fake_supabase):
     assert resp.json()["runs"][0]["run_id"] == "r1"
 
 
+def test_status_also_answers_without_trailing_slash(api_client, fake_supabase):
+    """Bare /jobs/status used to fall through to /jobs/{job_id} and 404."""
+    fake_supabase(tables={"ingestion_runs": [{"run_id": "r1"}]})
+
+    resp = api_client.get("/jobs/status")
+
+    assert resp.status_code == 200
+    assert resp.json()["runs"][0]["run_id"] == "r1"
+
+
 def test_status_flags_offline_db(api_client, fake_supabase):
     fake_supabase(fail=True)
 

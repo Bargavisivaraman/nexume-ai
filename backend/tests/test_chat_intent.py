@@ -8,6 +8,17 @@ def test_no_intent_for_general_chat():
     assert _detect_job_intent("Review my resume summary please") is None
 
 
+def test_intent_words_match_whole_words_not_substrings():
+    # "work" inside "framework" / "hire" inside "hired" must not trigger
+    assert _detect_job_intent("Which React framework should I learn?") is None
+    assert _detect_job_intent("Explain how networking protocols operate") is None
+
+
+def test_hyphenated_phrases_still_trigger_intent():
+    assert _detect_job_intent("any full-time react developer openings?") is not None
+    assert _detect_job_intent("full-time react developer") is not None
+
+
 def test_detects_intent_and_extracts_keyword():
     assert _detect_job_intent("find me python developer jobs") == "python developer"
     assert _detect_job_intent("any remote data scientist openings?") == "remote data scientist"

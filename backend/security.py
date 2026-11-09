@@ -33,12 +33,15 @@ from fastapi import HTTPException, Request
 
 def get_client_ip(request: Request) -> str:
     """
-    Render and Vercel sit behind reverse proxies. The trustworthy client IP is
-    in the leftmost entry of X-Forwarded-For. Fall back to direct peer address.
+    Render and Vercel sit behind reverse proxies. Leftmost X-Forwarded-For
+    entries are whatever the CLIENT sent — trivially spoofable, which would
+    let an attacker rotate fake IPs past the per-IP rate limits (unbounded
+    OpenAI spend). The only trustworthy entry is the RIGHTMOST one, appended
+    by our own proxy. Fall back to the direct peer address.
     """
     xff = request.headers.get("x-forwarded-for", "").strip()
     if xff:
-        return xff.split(",")[0].strip() or "unknown"
+        return xff.split(",")[-1].strip() or "unknown"
     real = request.headers.get("x-real-ip", "").strip()
     if real:
         return real
