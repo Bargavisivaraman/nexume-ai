@@ -23,6 +23,7 @@ def test_fetch_lever_normalizes_intern_posting():
         "descriptionPlain": "Build things with TypeScript and React.",
         "hostedUrl": "https://jobs.lever.co/acme/abc123",
         "salaryRange": {"min": 30, "max": 40, "interval": "hour"},
+        "createdAt": 1750000000000,  # epoch millis
     }]
 
     rows = _run(fetch_lever(_mock_client(httpx.Response(200, json=sample)), "acme", "Acme Inc"))
@@ -38,7 +39,23 @@ def test_fetch_lever_normalizes_intern_posting():
     assert row["salary_min"] == 30                   # taken from the structured salaryRange
     assert row["salary_period"] == "hour"
     assert row["source_name"] == "Lever"
+    assert row["posted_at"] == "2025-06-15T15:06:40+00:00"  # createdAt millis → UTC ISO
     assert "TypeScript" in (row["tech_stack"] or [])
+
+
+def test_fetch_lever_maps_permanent_commitment_and_missing_created_at():
+    sample = [{
+        "id": "def456",
+        "text": "Account Manager",
+        "categories": {"location": "Chicago, IL", "commitment": "Permanent"},
+        "descriptionPlain": "Own renewals.",
+    }]
+
+    rows = _run(fetch_lever(_mock_client(httpx.Response(200, json=sample)), "acme", "Acme"))
+
+    row = rows[0]
+    assert row["job_type"] == "Full-time"   # Lever's "Permanent" normalized
+    assert row["posted_at"] is None         # no createdAt → stays null, never invented
 
 
 def test_fetch_lever_skips_entries_without_id():

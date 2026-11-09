@@ -117,7 +117,7 @@ async def fetch_greenhouse(
             "url":              apply_url or None,
             "source_name":      "Greenhouse",
             "tech_stack":       tech_stack or None,
-            "posted_at":        j.get("updated_at"),
+            "posted_at":        j.get("first_published") or j.get("updated_at"),
             "fetched_at":       now_utc_iso(),
             "hash_dedupe":      compute_dedupe_hash(title, company_name, loc_str),
             "is_active":        True,

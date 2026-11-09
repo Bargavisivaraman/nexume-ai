@@ -27,6 +27,7 @@ def test_fetch_greenhouse_normalizes_a_job():
         "location": {"name": "New York, NY"},
         "content": "<p>We use Python and AWS. This role is remote friendly.</p>",
         "absolute_url": "https://boards.greenhouse.io/acme/jobs/123",
+        "first_published": "2026-05-20T00:00:00Z",
         "updated_at": "2026-06-01T00:00:00Z",
         "metadata": [{"name": "Salary Range", "value": "$120k - $160k"}],
     }]}
@@ -45,7 +46,20 @@ def test_fetch_greenhouse_normalizes_a_job():
     assert row["salary_min"] == 120000.0
     assert row["salary_max"] == 160000.0
     assert row["source_name"] == "Greenhouse"
+    assert row["posted_at"] == "2026-05-20T00:00:00Z"  # first_published beats updated_at
     assert "Python" in (row["tech_stack"] or [])
+
+
+def test_fetch_greenhouse_posted_at_falls_back_to_updated_at():
+    sample = {"jobs": [{
+        "id": 7,
+        "title": "Engineer",
+        "location": {"name": "Austin, TX"},
+        "content": "x",
+        "updated_at": "2026-06-01T00:00:00Z",
+    }]}
+    rows = _run(fetch_greenhouse(_mock_client(httpx.Response(200, json=sample)), "acme", "Acme"))
+    assert rows[0]["posted_at"] == "2026-06-01T00:00:00Z"
 
 
 def test_fetch_greenhouse_skips_untitled_jobs():

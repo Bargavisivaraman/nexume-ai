@@ -8,7 +8,7 @@ from typing import Optional
 
 # ── seniority / type detection ───────────────────────────────────────────────
 INTERNSHIP_RE = re.compile(r"\b(intern|internship|co[- ]?op)\b", re.IGNORECASE)
-NEW_GRAD_RE   = re.compile(r"\b(new[ -]?grad|new[ -]?graduate|graduate(?: program)?|university grad|2024 grad|2025 grad|2026 grad|early career)\b", re.IGNORECASE)
+NEW_GRAD_RE   = re.compile(r"\b(new[ -]?grad|new[ -]?graduate|graduate program|university grad|2024 grad|2025 grad|2026 grad|early career)\b", re.IGNORECASE)
 ENTRY_RE      = re.compile(r"\b(entry[ -]?level|junior|jr\.?|associate|level[ -]?1|l1)\b", re.IGNORECASE)
 SENIOR_RE     = re.compile(r"\b(senior|sr\.?|staff|principal|lead|architect)\b", re.IGNORECASE)
 EXEC_RE       = re.compile(r"\b(director|vp|vice president|chief|cto|ceo|coo|cfo|head of|founding)\b", re.IGNORECASE)
@@ -45,12 +45,17 @@ TECH_STACK_LABELS = {
 
 
 def detect_experience_level(title: str, description: str = "") -> str:
-    """Best-effort seniority classification from title (description is a fallback)."""
+    """Best-effort seniority classification from title (description is a fallback).
+
+    The title is checked for exec/senior signals FIRST — a "Senior ML Engineer"
+    posting whose description mentions a "graduate program" must not be
+    reclassified as Entry Level by the description fallback.
+    """
     text = f"{title} {description[:500]}"
-    if INTERNSHIP_RE.search(text):  return "Entry Level"
-    if NEW_GRAD_RE.search(text):    return "Entry Level"
     if EXEC_RE.search(title):       return "Executive"
     if SENIOR_RE.search(title):     return "Senior"
+    if INTERNSHIP_RE.search(text):  return "Entry Level"
+    if NEW_GRAD_RE.search(text):    return "Entry Level"
     if ENTRY_RE.search(title):      return "Entry Level"
     return "Mid Level"
 
@@ -113,6 +118,9 @@ def parse_salary(text: str) -> tuple[Optional[float], Optional[float], Optional[
     if not text:
         return (None, None, None)
     t = text.lower().replace(",", "")
+    # Retirement-plan mentions ("401k matching", "403(b)") must never read as
+    # salaries — strip them before any pattern can see the digits.
+    t = re.sub(r"\b401\s*\(?k\)?\b|\b403\s*\(?b\)?\b", " ", t)
 
     # hourly
     hourly = re.search(r"\$?(\d+(?:\.\d+)?)\s*(?:/|per\s)\s*(?:hour|hr|h)\b", t)
@@ -120,8 +128,8 @@ def parse_salary(text: str) -> tuple[Optional[float], Optional[float], Optional[
         v = float(hourly.group(1))
         return (v, v, "hour")
 
-    # k-style ranges: $120k - $160k
-    krange = re.search(r"\$?(\d{2,4})\s*k\s*[-–to]+\s*\$?(\d{2,4})\s*k", t)
+    # k-style ranges: $120k - $160k ($ required — "20k customers" is not a salary)
+    krange = re.search(r"\$(\d{2,4})\s*k\s*[-–to]+\s*\$?(\d{2,4})\s*k", t)
     if krange:
         lo, hi = float(krange.group(1)) * 1000, float(krange.group(2)) * 1000
         return (lo, hi, "year")
@@ -133,8 +141,8 @@ def parse_salary(text: str) -> tuple[Optional[float], Optional[float], Optional[
         if 10000 <= lo <= 1_000_000:
             return (lo, hi, "year")
 
-    # single k-style: $120k
-    ksingle = re.search(r"\$?(\d{2,4})\s*k\b", t)
+    # single k-style: $120k ($ required for the same reason)
+    ksingle = re.search(r"\$(\d{2,4})\s*k\b", t)
     if ksingle:
         v = float(ksingle.group(1)) * 1000
         return (v, v, "year")

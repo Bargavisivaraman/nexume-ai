@@ -1,10 +1,14 @@
 """Workable public job adapter.
 
-Endpoint:  https://apply.workable.com/api/v3/accounts/{slug}/jobs
-No auth required.
+Endpoint:  POST https://apply.workable.com/api/v3/accounts/{slug}/jobs
+No auth required — but it is POST-only (a GET returns 404), with a JSON body
+of search filters. An empty filter body returns every published job.
 
 Workable hosts ~30,000 small/mid companies across many industries — broader
 coverage than Greenhouse/Lever which skew tech.
+
+The v3 list response carries no description/requirements (those live on the
+per-job detail endpoint), so description stays empty and salary is unknown.
 """
 
 import html
@@ -22,6 +26,15 @@ WORKABLE_BASE = "https://apply.workable.com/api/v3/accounts"
 
 _HTML_TAGS = re.compile(r"<[^>]+>")
 
+# Workable "type" values in the v3 list response
+_WORKABLE_TYPE_MAP = {
+    "full":       "Full-time",
+    "part":       "Part-time",
+    "contract":   "Contract",
+    "temporary":  "Contract",
+    "internship": "Internship",
+}
+
 
 def _strip_html(s: Optional[str]) -> str:
     if not s: return ""
@@ -38,9 +51,9 @@ async def fetch_workable(
 ) -> list[dict]:
     """Fetch open jobs for one Workable-hosted company."""
     try:
-        resp = await http.get(
+        resp = await http.post(
             f"{WORKABLE_BASE}/{slug}/jobs",
-            params={"state": "published", "limit": str(limit)},
+            json={"query": "", "location": [], "department": [], "worktype": [], "remote": []},
             timeout=20.0,
         )
         if resp.status_code != 200:
@@ -52,7 +65,7 @@ async def fetch_workable(
         return []
 
     rows: list[dict] = []
-    for j in items:
+    for j in items[:limit]:
         shortcode = j.get("shortcode") or ""
         if not shortcode: continue
         job_id = f"workable_{slug}_{shortcode}"
@@ -64,34 +77,38 @@ async def fetch_workable(
         loc = j.get("location") or {}
         city = (loc.get("city") or "").strip() or None
         region = (loc.get("region") or "").strip() or None
-        ctry = (loc.get("country") or "").strip() or None
+        ctry = (loc.get("country") or "").strip() or None  # full name, display only
         loc_str = ", ".join(filter(None, [city, region, ctry])) or None
 
-        description = _strip_html(j.get("description") or "")
-        requirements = _strip_html(j.get("requirements") or "")
-        full_desc = (description + "\n\n" + requirements).strip()
+        # The list response has no description/requirements — degrade gracefully
+        full_desc = _strip_html(j.get("description") or "")
 
         work_mode, is_remote = detect_work_mode(title, full_desc, loc_str or "")
-        if loc.get("workplace") == "remote":
+        workplace = (j.get("workplace") or "").lower()
+        if workplace == "remote" or j.get("remote") is True:
             work_mode = "Remote"; is_remote = True
-        elif loc.get("workplace") == "hybrid":
+        elif workplace == "hybrid":
             work_mode = "Hybrid"; is_remote = False
+        elif workplace in ("on_site", "onsite"):
+            work_mode = "On-site"; is_remote = False
 
-        emp_type = j.get("employment_type") or ""
-        job_type = {
-            "full-time": "Full-time", "part-time": "Part-time",
-            "contract": "Contract", "internship": "Internship", "temporary": "Contract",
-        }.get(emp_type.lower(), detect_job_type(title, full_desc))
+        wtype = (j.get("type") or "").lower()
+        job_type = _WORKABLE_TYPE_MAP.get(wtype) or detect_job_type(title, full_desc)
 
         experience = detect_experience_level(title, full_desc)
-        is_intern = detect_internship(title, full_desc) or emp_type.lower() == "internship"
+        is_intern = detect_internship(title, full_desc) or wtype == "internship"
         is_new_grad = detect_new_grad(title, full_desc)
 
         sal_min, sal_max, sal_period = parse_salary(full_desc[:600])
 
-        apply_url = j.get("application_url") or j.get("shortlink") or ""
+        apply_url = f"https://apply.workable.com/{slug}/j/{shortcode}/"
 
         tech_stack = extract_tech_stack(full_desc)
+
+        # countryCode is ISO-2; location.country is a full name ("United
+        # States") and must never be truncated into a bogus code.
+        cc = (loc.get("countryCode") or "").strip().upper()
+        job_country = cc if (len(cc) == 2 and cc.isalpha()) else country
 
         rows.append({
             "job_id":           job_id,
@@ -100,7 +117,7 @@ async def fetch_workable(
             "location":         loc_str,
             "city":             city,
             "state":            region,
-            "country":          (ctry or country)[:2].upper() if ctry else country,
+            "country":          job_country,
             "is_remote":        is_remote,
             "work_mode":        work_mode,
             "industry":         None,
@@ -113,10 +130,10 @@ async def fetch_workable(
             "salary_currency":  "USD" if (sal_min or sal_max) else None,
             "salary_period":    sal_period,
             "description":      truncate(full_desc, 3000),
-            "url":              apply_url or None,
+            "url":              apply_url,
             "source_name":      "Workable",
             "tech_stack":       tech_stack or None,
-            "posted_at":        j.get("published_on"),
+            "posted_at":        j.get("published"),
             "fetched_at":       now_utc_iso(),
             "hash_dedupe":      compute_dedupe_hash(title, company_name, loc_str or ""),
             "is_active":        True,

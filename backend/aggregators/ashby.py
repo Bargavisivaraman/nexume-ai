@@ -16,7 +16,7 @@ from .common import (
     parse_location,
     detect_experience_level, detect_internship, detect_new_grad,
     detect_work_mode, detect_job_type, extract_tech_stack,
-    compute_dedupe_hash, truncate, now_utc_iso,
+    parse_salary, compute_dedupe_hash, truncate, now_utc_iso,
 )
 
 ASHBY_BASE = "https://api.ashbyhq.com/posting-api/job-board"
@@ -74,23 +74,37 @@ async def fetch_ashby(
             work_mode = "Hybrid"
             is_remote = False
 
-        job_type = detect_job_type(title, description)
+        # Ashby's structured employmentType beats regex sniffing the description
+        emp_type = (j.get("employmentType") or "").strip()
+        job_type = {
+            "FullTime": "Full-time", "PartTime": "Part-time",
+            "Contract": "Contract", "Temporary": "Contract", "Intern": "Internship",
+        }.get(emp_type) or detect_job_type(title, description)
         experience = detect_experience_level(title, description)
         is_intern = detect_internship(title, description)
         is_new_grad = detect_new_grad(title, description)
 
-        # Compensation block: a list of currency-aware tiers
+        # Compensation: compensationTiers[0].components holds the structured
+        # salary ({minValue, maxValue, currencyCode, interval, compensationType});
+        # compensationTierSummary is only a display STRING ("$207K – $285K •
+        # Offers Equity") kept as a parse fallback.
         sal_min, sal_max, sal_period, currency = (None, None, None, None)
-        comp = j.get("compensation") or {}
-        tiers = comp.get("compensationTierSummary") if isinstance(comp, dict) else None
-        if isinstance(tiers, list) and tiers:
-            t = tiers[0]
-            if isinstance(t, dict):
-                sal_min = t.get("minValue")
-                sal_max = t.get("maxValue")
-                currency = t.get("currencyCode")
-                interval = (t.get("interval") or "").lower()
-                sal_period = "hour" if "hour" in interval else "year"
+        comp = j.get("compensation") if isinstance(j.get("compensation"), dict) else {}
+        tiers = comp.get("compensationTiers") or []
+        components = (tiers[0].get("components") or []) if tiers and isinstance(tiers[0], dict) else []
+        for c in components:
+            if not isinstance(c, dict): continue
+            if c.get("compensationType") != "Salary": continue
+            sal_min = c.get("minValue")
+            sal_max = c.get("maxValue")
+            currency = c.get("currencyCode")
+            interval = (c.get("interval") or "").lower()
+            sal_period = "hour" if "hour" in interval else "year"
+            break
+        if sal_min is None and sal_max is None:
+            summary = comp.get("compensationTierSummary")
+            if isinstance(summary, str) and summary:
+                sal_min, sal_max, sal_period = parse_salary(summary)
 
         apply_url = j.get("jobUrl") or j.get("applyUrl") or ""
 

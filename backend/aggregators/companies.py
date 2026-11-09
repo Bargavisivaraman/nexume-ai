@@ -93,7 +93,6 @@ COMPANIES: list[dict] = [
     {"name": "Hims & Hers",    "ats": "greenhouse", "slug": "himsandhers",    "industry": "Healthcare", "tier": "tier3"},
     {"name": "23andMe",        "ats": "greenhouse", "slug": "23andme",        "industry": "Research & Science", "tier": "tier3"},
     {"name": "Recursion",      "ats": "greenhouse", "slug": "recursion",      "industry": "Research & Science", "tier": "tier3"},
-    {"name": "Moderna",        "ats": "workable",   "slug": "moderna",        "industry": "Healthcare", "tier": "tier3"},
 
     # ── Logistics / Marketplaces ─────────────────────────────────────────────
     {"name": "Faire",          "ats": "greenhouse", "slug": "faire",          "industry": "Retail & Hospitality", "tier": "tier2"},
@@ -105,9 +104,10 @@ COMPANIES: list[dict] = [
     {"name": "Snyk",           "ats": "greenhouse", "slug": "snyk",           "industry": "Technology", "tier": "tier2"},
 
     # ── Climate / Energy ─────────────────────────────────────────────────────
-    {"name": "Tesla",          "ats": "workable",   "slug": "tesla",          "industry": "Engineering", "tier": "tier1"},
-    {"name": "Rivian",         "ats": "workable",   "slug": "rivian",         "industry": "Engineering", "tier": "tier2"},
-    {"name": "Lucid Motors",   "ats": "workable",   "slug": "lucidmotors",    "industry": "Engineering", "tier": "tier3"},
+    # Tesla/Rivian/Moderna were dropped: their Workable boards 404 (or sit
+    # empty) and they aren't on Greenhouse/Lever/Ashby — they hire via their
+    # own careers sites / Workday, which we don't ingest.
+    {"name": "Lucid Motors",   "ats": "greenhouse", "slug": "lucidmotors",    "industry": "Engineering", "tier": "tier3"},
     {"name": "Watershed",      "ats": "ashby",      "slug": "watershed",      "industry": "Technology", "tier": "tier3"},
 
     # ── Finance: traditional ─────────────────────────────────────────────────
@@ -148,7 +148,7 @@ COMPANIES: list[dict] = [
 
     # ── Hardware ─────────────────────────────────────────────────────────────
     {"name": "Anduril",        "ats": "greenhouse", "slug": "anduril",        "industry": "Engineering", "tier": "tier2"},
-    {"name": "SpaceX",         "ats": "workable",   "slug": "spacex",         "industry": "Engineering", "tier": "tier1"},
+    {"name": "SpaceX",         "ats": "greenhouse", "slug": "spacex",         "industry": "Engineering", "tier": "tier1"},
 ]
 
 

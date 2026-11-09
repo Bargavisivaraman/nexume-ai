@@ -7,6 +7,7 @@ Lever hosts ~3,000 companies including Netflix (some teams), Github, Square,
 Asana, Lyft, Eventbrite, Postman, KeepTruckin, Affirm, etc.
 """
 
+from datetime import datetime, timezone
 from typing import Optional
 import httpx
 
@@ -65,7 +66,7 @@ async def fetch_lever(
         job_type = commit or detect_job_type(title, description)
         if job_type:
             # normalize
-            job_type = {"Intern": "Internship", "Fulltime": "Full-time", "Parttime": "Part-time"}.get(job_type, job_type)
+            job_type = {"Intern": "Internship", "Fulltime": "Full-time", "Parttime": "Part-time", "Permanent": "Full-time"}.get(job_type, job_type)
         experience = detect_experience_level(title, description)
         is_intern = detect_internship(title, description) or (commit == "Intern")
         is_new_grad = detect_new_grad(title, description)
@@ -88,6 +89,13 @@ async def fetch_lever(
             job_country = api_country  # Lever's structured field beats text parsing
 
         tech_stack = extract_tech_stack(description)
+
+        # Lever exposes the post date as createdAt (epoch milliseconds).
+        # Without it every Lever job was excluded from "Past 24h/7d" filters.
+        posted_at = None
+        created_ms = j.get("createdAt")
+        if isinstance(created_ms, (int, float)) and created_ms > 0:
+            posted_at = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc).isoformat()
 
         rows.append({
             "job_id":           job_id,
@@ -112,7 +120,7 @@ async def fetch_lever(
             "url":              apply_url or None,
             "source_name":      "Lever",
             "tech_stack":       tech_stack or None,
-            "posted_at":        None,  # Lever doesn't expose post date in this endpoint
+            "posted_at":        posted_at,
             "fetched_at":       now_utc_iso(),
             "hash_dedupe":      compute_dedupe_hash(title, company_name, loc_str or ""),
             "is_active":        True,
