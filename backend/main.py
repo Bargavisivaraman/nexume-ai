@@ -944,8 +944,13 @@ async def get_jobs(
             supabase_offline = True
             print(f"[/jobs/] Supabase unavailable, using live sources only: {e}")
 
-        # ── Live sources — run ALL in parallel, merge results ──────────────────
-        if not jobs:
+        has_more = len(jobs) >= per_page  # DB page filled to per_page
+
+        # ── Live sources — ONLY when the DB query itself failed ────────────────
+        # Zero rows from a healthy DB is a real answer (strict filters, paging
+        # past the end) — falling back there dumped ~150 unfiltered live jobs
+        # over legitimately empty results and paginated forever.
+        if supabase_offline:
             loc          = location or ("Los Angeles, CA" if country.upper() == "US" else "Remote")
             rem_category = REMOTIVE_CATEGORY_MAP.get(industry or "", None)
 
@@ -977,14 +982,17 @@ async def get_jobs(
                     seen.add(key)
                     unique.append(j)
 
-            jobs = unique
+            # The merged live list is one big batch — page it ourselves so
+            # offset/per_page behave exactly like the DB path.
+            has_more = offset + per_page < len(unique)
+            jobs = unique[offset : offset + per_page]
 
         return {
             "jobs":     jobs,
             "page":     page,
             "country":  country.upper(),
             "count":    len(jobs),
-            "has_more": len(jobs) >= per_page,
+            "has_more": has_more,
             "sources":  list({j.get("source","Unknown") for j in jobs}),
             "supabase_offline": supabase_offline,
         }

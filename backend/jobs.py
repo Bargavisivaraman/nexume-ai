@@ -363,6 +363,21 @@ async def run_ingestion(
 # QUERY BUILDER  (used by /jobs/ endpoint)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _sanitize_or_term(value: str) -> str:
+    """Make a user string safe inside a PostgREST ``or=`` pattern.
+
+    Commas, parentheses and percent signs are structural in the or= syntax —
+    a keyword like "ux, design" or "Austin (TX)" would otherwise produce a
+    malformed filter (PGRST100), which upstream code mistakes for Supabase
+    being offline. Replace them with spaces and collapse the whitespace so the
+    term still matches sensibly.
+    """
+    cleaned = value
+    for ch in (",", "(", ")", "%"):
+        cleaned = cleaned.replace(ch, " ")
+    return " ".join(cleaned.split())
+
+
 def build_jobs_query(
     supabase: Client,
     country:          str,
@@ -383,8 +398,9 @@ def build_jobs_query(
     SELECT = (
         "job_id,title,company,location,city,state,country,"
         "is_remote,work_mode,industry,job_type,experience_level,"
+        "is_internship,is_new_grad,"
         "salary_min,salary_max,salary_currency,salary_period,"
-        "url,source_name,posted_at,fetched_at,"
+        "url,source_name,tech_stack,posted_at,fetched_at,"
         "description"
     )
 
@@ -397,12 +413,13 @@ def build_jobs_query(
 
     # ── Keyword (title + company + description) ───────────────────────────────
     if keyword and keyword.strip():
-        kw = keyword.strip()
-        q  = q.or_(
-            f"title.ilike.%{kw}%,"
-            f"company.ilike.%{kw}%,"
-            f"description.ilike.%{kw}%"
-        )
+        kw = _sanitize_or_term(keyword)
+        if kw:
+            q = q.or_(
+                f"title.ilike.%{kw}%,"
+                f"company.ilike.%{kw}%,"
+                f"description.ilike.%{kw}%"
+            )
 
     # ── Industry (exact match on pre-classified column) ───────────────────────
     if industry and industry.strip():
@@ -432,16 +449,22 @@ def build_jobs_query(
     # That string could match any of: the `city` column, the `state` column, or
     # the denormalized `location` column. OR across all three so we don't miss.
     if state_filter and state_filter.strip():
-        sf = state_filter.strip().replace(",", "")  # commas confuse PostgREST OR
-        # Try both the full string and the first city-name segment for better hits
-        first_token = sf.split()[0] if sf else sf
-        q = q.or_(
-            f"city.ilike.%{sf}%,"
-            f"state.ilike.%{sf}%,"
-            f"location.ilike.%{sf}%,"
-            f"city.ilike.%{first_token}%,"
-            f"location.ilike.%{first_token}%"
-        )
+        # Sanitized full string ("Los Angeles, CA" → "Los Angeles CA") — the
+        # comma is structural in PostgREST or=, so the pattern swaps it for a
+        # space. That full pattern won't hit the comma-formed `location`
+        # column, so ALSO match the city segment ("Los Angeles") on its own.
+        sf = _sanitize_or_term(state_filter)
+        city_token = _sanitize_or_term(state_filter.split(",")[0])
+        if sf:
+            clauses = [
+                f"city.ilike.%{sf}%",
+                f"state.ilike.%{sf}%",
+                f"location.ilike.%{sf}%",
+            ]
+            if city_token and city_token != sf:
+                clauses.append(f"city.ilike.%{city_token}%")
+                clauses.append(f"location.ilike.%{city_token}%")
+            q = q.or_(",".join(clauses))
 
     # ── Date range — filter by the source's posted_at, NOT our fetched_at ────
     # fetched_at = "we just ingested it"; posted_at = "the company posted it".
